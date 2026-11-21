@@ -71,7 +71,7 @@ Stripped:   No
 ```mermaid
 flowchart TB
     subgraph ATK["① 攻击者侧 (WSL2 / Kali)"]
-        EXP["exp.py<br/>pwntools 4.15.0<br/>flat(56B + 4×DWORD)"]
+        EXP["05_get_started_3dsctf_2016_exp.py<br/>pwntools 4.15.0<br/>flat(56B + 4×DWORD)"]
         DBG["objdump / readelf / checksec<br/>静态情报收集"]
     end
 
@@ -170,7 +170,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    E1["外部实体<br/>攻击者 exp.py"]
+    E1["外部实体<br/>攻击者 05_get_started_3dsctf_2016_exp.py"]
     E2["外部实体<br/>宿主文件系统"]
 
     P1("P1 输入处理<br/>main → _IO_gets")
@@ -393,7 +393,7 @@ void exit(int status)
 | `0x40 – 0x43` | 4 B | `p32(0x308cd64f)` | `get_flag` 的 arg1 |
 | `0x44 – 0x47` | 4 B | `p32(0x195719d1)` | `get_flag` 的 arg2 |
 
-总计 **72 字节**，对应 `exp.py` 中：
+总计 **72 字节**，对应 `05_get_started_3dsctf_2016_exp.py` 中：
 
 ```python
 payload = flat(
@@ -495,7 +495,7 @@ flowchart TD
 ```bash
 cd '/home/yfhd5/Pwn Writeups'
 source .venv/bin/activate
-cd 05_get_started_3dsctf_2016
+cd ret2text
 
 python -c "import pwn; print(pwn.version)"   # 4.15.0
 checksec --file=get_started_3dsctf_2016
@@ -504,19 +504,19 @@ checksec --file=get_started_3dsctf_2016
 ### 7.2 运行 exploit
 
 ```bash
-python exp.py          # 连接 CTF² 远端（TLS :9999）
-python exp.py LOCAL    # 本地复现，需要当前目录存在 flag.txt
+python 05_get_started_3dsctf_2016_exp.py          # 连接 CTF² 远端（TLS :9999）
+python 05_get_started_3dsctf_2016_exp.py LOCAL    # 本地复现，需要当前目录存在 flag.txt
 ```
 
 ### 7.3 本地验证结果
 
-在 `/tmp` 中复制二进制、`exp.py` 并写入测试 flag：
+在 `/tmp` 中复制二进制、`05_get_started_3dsctf_2016_exp.py` 并写入测试 flag：
 
 ```bash
 mkdir -p /tmp/gs_exp && cd /tmp/gs_exp
-cp '/home/yfhd5/Pwn Writeups/05_get_started_3dsctf_2016/'{get_started_3dsctf_2016,exp.py} .
+cp '/home/yfhd5/Pwn Writeups/ret2text/'{get_started_3dsctf_2016,05_get_started_3dsctf_2016_exp.py} .
 printf 'flag{local_validation_0k}\n' > flag.txt
-'/home/yfhd5/Pwn Writeups/.venv/bin/python' exp.py LOCAL
+'/home/yfhd5/Pwn Writeups/.venv/bin/python' 05_get_started_3dsctf_2016_exp.py LOCAL
 ```
 
 实际输出：

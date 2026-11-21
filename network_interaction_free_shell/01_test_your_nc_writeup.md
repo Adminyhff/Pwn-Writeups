@@ -1,8 +1,8 @@
 To be editd:
-![查看函数](image.png)
-![查看自定义函数](image-1.png)
-![info registers rip](image-2.png)
-![Stack Allignment](image-3.png)
+![查看函数](01_test_your_nc_image.png)
+![查看自定义函数](01_test_your_nc_image-1.png)
+![info registers rip](01_test_your_nc_image-2.png)
+![Stack Allignment](01_test_your_nc_image-3.png)
 
 
 # Target Intelligence & Reconnaissance

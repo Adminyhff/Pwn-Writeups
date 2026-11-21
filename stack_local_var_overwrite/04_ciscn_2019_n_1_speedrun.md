@@ -33,7 +33,7 @@ b'A' * 44 + p32(0x41348000)
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/04_ciscn_2019_n_1'
+cd '/home/yfhd5/Pwn Writeups/stack_local_var_overwrite'
 
 file ciscn_2019_n_1
 checksec --file=ciscn_2019_n_1

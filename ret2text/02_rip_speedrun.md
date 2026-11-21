@@ -27,7 +27,7 @@ b'A' * 23 + p64(0x401187)
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/02_rip'
+cd '/home/yfhd5/Pwn Writeups/ret2text'
 
 file rip
 checksec --file=rip

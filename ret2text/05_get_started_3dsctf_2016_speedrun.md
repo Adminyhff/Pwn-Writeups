@@ -30,7 +30,7 @@ gets() 栈溢出
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/05_get_started_3dsctf_2016'
+cd '/home/yfhd5/Pwn Writeups/ret2text'
 
 file get_started_3dsctf_2016
 checksec --file=get_started_3dsctf_2016
@@ -296,10 +296,10 @@ if __name__ == "__main__":
 
 ```bash
 mkdir -p /tmp/gs_exp
-cp get_started_3dsctf_2016 /tmp/gs_exp/
+cp get_started_3dsctf_2016 05_get_started_3dsctf_2016_exp.py /tmp/gs_exp/
 printf 'flag{local_validation_0k}\n' > /tmp/gs_exp/flag.txt
 cd /tmp/gs_exp
-python exp.py LOCAL
+python 05_get_started_3dsctf_2016_exp.py LOCAL
 ```
 
 ---
@@ -338,8 +338,8 @@ python exp.py LOCAL
 | 0:00–0:20 | `file` + `checksec` + `nm`：32 位静态、无 PIE、无 canary、有 `get_flag` |
 | 0:20–0:50 | `objdump` 看 `main/get_flag`：拿到偏移 56、magic、`flag.txt` |
 | 0:50–1:20 | 写 72 字节 payload：`56 + get_flag + exit + arg1 + arg2` |
-| 1:20–1:40 | 本地验证：`python exp.py LOCAL`，看到 flag 即成功 |
-| 1:40–2:00 | 远端：`python exp.py`，TLS 连上去直接拿 flag |
+| 1:20–1:40 | 本地验证：`python 05_get_started_3dsctf_2016_exp.py LOCAL`，看到 flag 即成功 |
+| 1:40–2:00 | 远端：`python 05_get_started_3dsctf_2016_exp.py`，TLS 连上去直接拿 flag |
 
 ---
 
