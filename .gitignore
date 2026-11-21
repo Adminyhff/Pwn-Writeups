@@ -1,43 +1,207 @@
-.vscode-server/
-.vscode/
-.cache/
-*.log
-# 操作系统垃圾
-.DS_Store
-Thumbs.db
-*:Zone.Identifier
+# ============================================================
+# Pwn Writeups .gitignore
+#
+# Git cannot inspect file headers, so .gitignore cannot directly
+# say "ignore extensionless ELF". Use deny-all + whitelist:
+#   - extensionless files (including challenge ELF) are ignored
+#   - source, docs, images and common config are explicitly kept
+#   - no per-challenge filename maintenance is needed
+# ============================================================
 
-# IDE / 编辑器环境
+# 1. 默认忽略全部文件，但保留目录以便继续遍历。
+*
+!*/
+
+# 2. 白名单：源码、文档、配置和图片。
+!.gitignore
+!.gitattributes
+!.gitmodules
+!*.py
+!*.pyi
+!*.pyw
+!*.c
+!*.C
+!*.h
+!*.H
+!*.cc
+!*.cpp
+!*.cxx
+!*.hpp
+!*.hh
+!*.hxx
+!*.s
+!*.S
+!*.asm
+!*.ld
+!*.mk
+!Makefile
+!makefile
+!GNUmakefile
+!Dockerfile
+!*.md
+!*.MD
+!*.markdown
+!*.rst
+!*.txt
+!*.pdf
+!*.tex
+!*.bib
+!*.ipynb
+!*.sh
+!*.bash
+!*.zsh
+!*.ps1
+!*.bat
+!*.cmd
+!*.json
+!*.jsonc
+!*.yaml
+!*.yml
+!*.toml
+!*.ini
+!*.cfg
+!*.conf
+!*.properties
+!*.sql
+!*.html
+!*.htm
+!*.css
+!*.scss
+!*.less
+!*.js
+!*.mjs
+!*.cjs
+!*.ts
+!*.jsx
+!*.tsx
+!*.vue
+!*.go
+!*.rs
+!*.java
+!*.kt
+!*.kts
+!*.rb
+!*.php
+!*.pl
+!*.pm
+!*.lua
+!*.r
+!*.R
+!*.jl
+!*.swift
+!*.cs
+!*.fs
+!*.fsx
+!*.vb
+!LICENSE
+!LICENSE.*
+!COPYING
+!NOTICE
+!AUTHORS
+!CONTRIBUTORS
+!CHANGELOG
+!CHANGELOG.*
+!README
+!README.*
+!*.png
+!*.PNG
+!*.jpg
+!*.JPG
+!*.jpeg
+!*.JPEG
+!*.gif
+!*.GIF
+!*.bmp
+!*.svg
+!*.SVG
+!*.webp
+!*.tif
+!*.tiff
+!*.ico
+!*.avif
+
+# 3. 虚拟环境必须放在白名单之后，
+#    否则 !*.py 会把 .venv 内的 .py 文件重新纳入。
+.venv/
+.venv*/
+venv/
+ENV/
+env/
+pwn_env/
+auto_env/
+
+# 4. Python 缓存与测试产物。
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.eggs/
+*.egg-info/
+build/
+dist/
+wheels/
+
+# 5. 编译产物、调试产物和归档文件。
+*.o
+*.obj
+*.out
+*.exe
+*.dll
+*.dylib
+*.so
+*.so.*
+*.a
+*.lib
+*.ko
+*.mod
+*.elf
+*.bin
+*.img
+*.hex
+*.srec
+*.map
+*.gch
+*.pch
+*.dSYM/
+*.d
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.ilk
+*.pdb
+*.class
+*.jar
+*.wasm
+*.node
+*.zip
+*.tar.gz
+a.out
+core
+core.*
+vgcore.*
+*.core
+*.stackdump
+
+# 6. IDE、操作系统、日志与敏感信息。
 .vscode-server/
 .vscode/
 .idea/
 .pycharm_helpers/
-
-# Python 环境与缓存
-venv/
-pwn_env/
-__pycache__/
-*.pyc
-auto_env/
-# C/C++ 编译产物
-*.o
-*.out
-*.exe
-a.out
-
-# 敏感信息（绝不能泄露）
+.cache/
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+*.swp
+*.swo
+*~
 *.log
 .env
 .ssh/
-
-# 超大二进制文件/固件/模型权重
-*.bin
-*.img
-*.safetensors
-*.zip
-*.tar.gz
-
-# 无后缀的编译后可执行文件
-
-vuln
-core.*
