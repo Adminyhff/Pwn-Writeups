@@ -934,13 +934,11 @@ handler      @0x40116c：
 3. 拿到 agent 后：请求头顺序 `User-Agent: <8字节>`（二进制，无空白）+ `back: cat flag*`，
    直接在回包 body 取 flag。
 
-### 5.6 其他高难 / 大工程题（仅登记，未展开）
+### 5.6 其他高难题（仅登记，未展开）
 
 | 二进制 | 保护 / 形态 | 已知信息 | 判定 |
 | --- | --- | --- | --- |
 | `publibc/bf` | PIE、Full RELRO、Canary；导入 `system` | 14KB，`scanf`/`getchar`/`putchar`/`malloc` + `system` —— 典型 brainfuck 解释器，越界指针对 tape 任意读写；Full RELRO 不能改 GOT | 需 hook / FSOP，30 分钟以上 |
 | `card/pwn` | PIE、Full RELRO、Canary；附件 `libc.so` | 10KB，`printf`/`__isoc99_scanf`/`malloc`/`free`/`read`/`write` —— 疑似“卡牌”堆题 | 需 PIE + heap leak，30 分钟以上 |
-| `pwn10` | 静态、stripped、913KB | 无 libc 依赖，只能用 `syscall` gadget 做 ROP/ORW | 静态二进制找 gadget + 无 libc，60 分钟级 |
-| `complex_calc_boston_2016` | 静态、stripped、882KB | 计算器类交互；字符串被压缩/混淆 | 60 分钟级 |
 
 > 以上 5.3–5.6 均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
