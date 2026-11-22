@@ -613,3 +613,94 @@ args 1..264 中不存在 0x804a0a0（flag），也不存在 0x804a010（strcmp@G
 2. 检查 `strchr@GOT` 的 LSB 改写能否把 `strchr` 重定向到同页内的可用函数。
 3. 用 `%n` 把 `strchr@GOT` 改成 `main`（`0x804872b` ≈ 134M 字符，可接受），
    让程序跑第二轮 —— 第二轮 `strcmp` / `puts` 已解析，才有机会拿到 `0x804a010` 槽位。
+
+### 5.3 `easyROPtocol/pwn`（2022 校赛 / seccomp + 4 槽 message）
+
+```text
+64 位、No PIE（EXEC）、NX、Partial RELRO、无 canary、stripped；附件 libc-2.31.so
+init 里做了 seccomp：prctl(0x26=PR_SET_NO_NEW_PRIVS,1,0,0,0)
+                 + prctl(0x16=PR_SET_SECCOMP,2,&sock_fprog)（8 条 BPF，先按“无强限制”待确认）
+
+菜单（父函数 0x401a5e）：1. Your tcp message  2. Delete the message  3. Submit  4. Quit
+4 个消息槽：全局表 0x404240（每槽 8 字节指针，共 4 个）
+选项 1 @0x4016xx：malloc(0x1000) + read(0, chunk, 0x1000)，随后校验（"nv"=0x766e、0x28b7、
+                 dword@+0x4 与槽号匹配），不通过就 free
+选项 3 @0x401830：栈帧 0x3018，buf = rbp-0x3020
+   strcpy(rbp-0x3020, chunk + 4*(word@+0xc & 0xf))     <-- 无界 strcpy
+   然后对每个槽 memcpy(rbp-0x3020 + strlen(buf), chunk, 0x1000) 循环（+0x1000/次）
+   最后 write(1, buf, strlen(buf)) + write(1, "Done.\n") 才 ret
+```
+
+阻塞点：单条 message 最多 0x1000 字节，而栈缓冲是 0x3020，必须凑满多个槽（每个都要通过
+`"nv"`/`0x28b7`/槽号校验）让 `memcpy` 把总长度顶过 0x3020；且 seccomp 允许的 syscall 集合
+还没静态确认，决定最终是 `system("/bin/sh")` 还是 ORW。
+
+下一步：
+
+1. 用 `gdb` 在 0x401a38 前 dump seccomp 过滤器的 8 条 BPF（`sock_fprog.filter`），确认是否只放行 `read/write`。
+2. 用 2~4 个合法 message 把 `memcpy` 的累计偏移顶到 `0x3020+8`，测 saved rip 的位置。
+3. 若 seccomp 只放行 `read/write` → `open/read/write` 的 ORW ROP；否则直接 `system("/bin/sh")`。
+
+### 5.4 `PWN附件/canary3`（PIE + 字符串加密）
+
+```text
+64 位、PIE、NX、Partial RELRO、Canary、not stripped（无符号表）
+strings 全为空/乱码（运行时解密）；导入里有 system@plt
+0x2280 附近：printf 提示 → read → printf → read → strlen → 0x400b9c →
+             0x400cea → strcmp ×2（0x2351 / 0x2368）
+0x237f puts → 0x2398 __stack_chk_fail → 0x23aa puts → 0x23b6 system
+0xf33 / 0xcea 等函数：memcpy 到 0x...，疑似解密/校验
+```
+
+阻塞点：所有可读提示都被加密，无法从字符串推断菜单语义；且 PIE + Canary，
+需要先拿到一次输出泄漏（`printf` 的参数可能就是输入本身）。
+
+下一步：
+
+1. 直接运行，观察实际输出（解密后的提示），确认输入格式与比较对象。
+2. 断在 `0x2351` 的两处 `strcmp`，看比较的是输入 vs 全局字符串还是输入 vs 输入。
+3. 若 `system` 的参数可控（例如 `system(buf)` 且 buf 可写），走 `ret2text`；否则先 leak PIE/Canary。
+
+### 5.5 `jarvisoj_http`（端口 1807 的 httpd，`popen` 命令注入）
+
+```text
+64 位、No PIE、NX；监听 0,0,0,0:1807（htons(0x70f)），accept 后 fork
+
+read_request @0x40125d：逐字节 read(1)，直到收到 "\r\n\r\n"，再 strdup
+handler      @0x40116c：
+  strstr(request, "User-Agent: ")  -> sscanf("User-Agent: %32s\r\n", agent[0x20])
+  check(agent) @0x400faf：base64_decode(global @0x601ce8 = "La9mdn+nu/q=", 表 @0x401600)
+                          后逐字节比较 agent[i] ^ i == decoded[i]，不等则 handler 返回 0
+  strstr(request, "back: ")        -> sscanf("back: %512[^\r]s\r\n", cmd[0x200])
+  read_file(cmd, out[0x8000], 0x8000) @0x40102f：popen(cmd, "r") 后逐字节 fgetc 读输出
+  puts(out) + send_response(fd, out)  -> 回包带 Content-Length
+
+=> 只要过了 check，"back: cat flag*" 就是一条命令执行，回包里直接有 flag
+```
+
+已验证：不带非法字段的普通请求返回默认页 `Welcome to 2016 JBXDbb`（`.data` 0x601ce0 → 0x4015d8）。
+
+阻塞点（check 的密钥）：
+
+- 标准 base64 解 `La9mdn+nu/q=` = `2d af 66 76 7f a7 bb fa`，推出 agent = `2d ae 64 75 7b a2 bd fd` → 实测仍回默认页。
+- 按 `.rodata` 0x401600 的**旋转表** `abcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZ`
+  解得 `c4 08 cc 0c d9 0d 52 54 00`，推出 agent 第 2 字节是 `0x09`（TAB），`%32s` 会截断，不可能通过。
+- 说明 0x400d30 的解码细节（`sprintf(dst,"%s%c")` 拼接、`=` 处理）与假设不同。
+
+下一步：
+
+1. `gdb` 断 `0x4011c2`，直接 `x/8bx` 看 `0x400faf` 里 `strlen(base)` 与 `base[i]` 的真实值（最省时间）。
+2. 也可以断 `0x401056`（popen 前）确认 `back:` 解析出的 cmd 是否含 `\r`。
+3. 拿到 agent 后：请求头顺序 `User-Agent: <8字节>`（二进制，无空白）+ `back: cat flag*`，
+   直接在回包 body 取 flag。
+
+### 5.6 其他高难 / 大工程题（仅登记，未展开）
+
+| 二进制 | 保护 / 形态 | 已知信息 | 判定 |
+| --- | --- | --- | --- |
+| `publibc/bf` | PIE、Full RELRO、Canary；导入 `system` | 14KB，`scanf`/`getchar`/`putchar`/`malloc` + `system` —— 典型 brainfuck 解释器，越界指针对 tape 任意读写；Full RELRO 不能改 GOT | 需 hook / FSOP，30 分钟以上 |
+| `card/pwn` | PIE、Full RELRO、Canary；附件 `libc.so` | 10KB，`printf`/`__isoc99_scanf`/`malloc`/`free`/`read`/`write` —— 疑似“卡牌”堆题 | 需 PIE + heap leak，30 分钟以上 |
+| `pwn10` | 静态、stripped、913KB | 无 libc 依赖，只能用 `syscall` gadget 做 ROP/ORW | 静态二进制找 gadget + 无 libc，60 分钟级 |
+| `complex_calc_boston_2016` | 静态、stripped、882KB | 计算器类交互；字符串被压缩/混淆 | 60 分钟级 |
+
+> 以上 5.3–5.6 均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
