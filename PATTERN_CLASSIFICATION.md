@@ -59,6 +59,7 @@
 | 16 | `babyfengshui_33c3_2016` | heap / 相邻对象指针改写 | `heap_exploitation` | `fgets@GOT` leak -> `free@GOT=system` | **0xC0** | `FGETS_GOT=0x804B014`、`FREE_GOT=0x804B010` |
 | 17 | `others_shellcode` | 网络交互 / 白给 Shell | `network_interaction_free_shell` | `main -> getShell -> int 0x80 execve` | N/A | 无地址 / 无偏移 |
 | 18 | `repeater` | canary leak + ret2libc / 64 位回显型溢出 | `ret2libc` | `puts(buf)` 泄 canary，`puts(read@got)` 泄 libc，回 `main` 二阶段 | **0x28**（canary 0x28，RIP 0x38） | `pop rdi;ret=0x400933`、`ret=0x400934`、`read@got=0x601030`、`main=0x4007d9` |
+| 19 | `pwnable_silverbullet` | 逻辑 bug 型栈越界 + ret2libc / 32 位 | `ret2libc` | `strncat` 的 NUL 打坏 `power`，`power` 与 `strlen(desc)` 失配后越界写；`beat` 获胜逼出 `main` 的 `ret` | 越界 **0x2f**（起点 `ebp-0x3`） | `read@plt=0x8048490`、`puts@plt=0x80484a8`、`read@got=0x804afd0`、`main=0x8048954` |
 
 ---
 
@@ -440,6 +441,41 @@ puts@plt=0x400610；read@got=0x601030；pop rdi;ret=0x400933；ret=0x400934
 - 两阶段：`puts(read@got)` + 回 `main` 泄 libc；`ret` 对齐后 `system("/bin/sh")`。
 - 注意 `read` 短读：泄漏长度不对就整条连接重来（脚本内重试 5 次）。
 
+### 3.19 `19_pwnable_silverbullet` → `ret2libc`
+
+speedrun 中的关键证据：
+
+```text
+32 位 i386、No PIE、NX、not stripped、menu 四选项
+
+struct bullet { char desc[0x30]; unsigned power; }  @ ebp-0x34 (power @ ebp-0x4)
+werewolf { int hp = 0x7fffffff; char *name = "Gin"; } @ ebp-0x3c / ebp-0x38
+
+create_bullet: read_input(desc, 0x30); power = strlen(desc)
+power_up:      if (power > 0x2f) return; n = 0x30 - power;
+               read_input(tmp, n); strncat(desc, tmp, n);
+               power = power + strlen(tmp)
+beat:          hp -= power; if (hp <= 0) "Oh ! You win !!" -> main return
+
+三步打穿：
+1) create 47 字节 + '\n'      -> strlen(desc)=0x2f, power=0x2f
+2) power_up 只发 1 字节        -> strncat 的 NUL 落在 desc[0x30] = power 低字节
+                                 power 变 1，但 strlen(desc) 已是 0x31
+3) power_up 第二次 n=0x2f      -> strncat 从 desc+0x31 = ebp-0x3 开始写 0x2f 字节
+```
+
+结论：
+
+- 漏洞不是普通 `read`/`gets` 溢出，而是**长度检查字段与写入位置字段不是同一个值**。
+- 越界起点 `ebp-0x3`（不是 `-0x4`），前 3 字节灌进 `power` 高 3 位 → `power=0xffffff30`，
+  `beat` 的 `hp - power` 变负，才会打印 `Oh ! You win !!` 并让 `main` 走 `leave; ret`；
+  选 `4` 是 `exit(0)`，永远不会 `ret`。
+- `strncat` 以 NUL 结束 ⇒ 整条 payload（含 ROP 链）不能出现 `\x00`：
+  saved ebp 用 `0x01010101` 这类脏值，`system`/`binsh` 含 0 字节时重连重试。
+- 泄漏选 `read@got`（`0x804afd0`）：本机 libc 的 `puts` 最低字节是 `0x00`，
+  `puts(puts@got)` 只会打印一个空行。
+- 两轮：`puts(read@got)` + 回 `main` → `system("/bin/sh")`。
+
 ---
 
 ## 4. 仓库结构映射（重构前 → 重构后）
@@ -464,6 +500,7 @@ puts@plt=0x400610；read@got=0x601030；pop rdi;ret=0x400933；ret=0x400934
 | `babyfengshui_33c3_2016`（根目录散落） | `heap_exploitation/16_babyfengshui_33c3_2016_*`、`heap_exploitation/babyfengshui_33c3_2016` |
 | `others_shellcode`（根目录散落） | `network_interaction_free_shell/17_others_shellcode_*`、`network_interaction_free_shell/others_shellcode` |
 | `repeater`（根目录散落） | `ret2libc/18_repeater_*`、`ret2libc/repeater` |
+| `pwnable_silverbullet`（根目录散落） | `ret2libc/19_pwnable_silverbullet_*`、`ret2libc/pwnable_silverbullet` |
 
 命名规则：
 

