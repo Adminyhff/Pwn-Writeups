@@ -60,6 +60,14 @@ Pwn Writeups/
 │   ├── make_local_exec.py
 │   ├── orw
 │   └── orw_local_exec                 # 本地补丁版（PT_LOAD 加 PF_X）
+├── srop/                              # rt_sigreturn 一次设置全部寄存器
+│   └── README.md                      # 该模式的判定条件与 sigframe 布局说明
+├── labs/                              # 自造靶场（非真实赛题，用于补齐缺失题型）
+│   └── lab_srop_baby/                 # L1：只能靠 SROP 解的最小靶子
+│       ├── README.md
+│       ├── src/chal.S
+│       ├── Makefile
+│       └── exp.py
 ├── format_string_write/               # printf(user_input) + %n 任意写
 │   ├── README.md
 │   ├── 08_fifth_space_2019_pwn5_{speedrun,exp}.*
@@ -91,6 +99,7 @@ Pwn Writeups/
 | `ret2shellcode` | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后执行栈/堆上 shellcode | `21_pwnable_start` |
 | `stack_pivot` | 溢出空间不足，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` 再执行长链 | `22_ropemporium_pivot` |
 | `sandbox_seccomp` | 程序装 seccomp BPF，`execve` 被拦，只能 `open`+`read`+`write` 读 flag | `23_pwnable_orw` |
+| `srop` | `rax=15` + `syscall` 触发 `rt_sigreturn`，用 248 字节 sigframe 一次设置全部寄存器 | `L1_lab_srop_baby`（自造） |
 | `format_string_write` | `printf(user_input)`，用 `%n` 改全局变量或 GOT | `08_fifth_space_2019_pwn5` |
 | `stack_local_var_overwrite` | 栈溢出改相邻局部变量，绕过条件判断 | `04_ciscn_2019_n_1` |
 | `heap_uaf` | free 后指针仍被引用，重新分配旧对象改写函数指针 | `14_hitcontraining_uaf` |
@@ -178,6 +187,11 @@ python 16_babyfengshui_33c3_2016_exp.py LOCAL
 
 cd ../network_interaction_free_shell
 python 17_others_shellcode_exp.py LOCAL
+
+cd ../labs/lab_srop_baby
+# L1 是自造 SROP 靶场：make 只用 as + ld，无 libc 依赖
+make
+python exp.py
 ```
 
 > 远程 EXP 中的 `HOST` / `PORT` 会随靶机变化；CTF² 平台需要 `ssl=True`。

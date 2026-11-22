@@ -32,3 +32,5 @@
 - `orw` / `death_note` 同样是栈可执行，但要先过 seccomp 或走堆上 shellcode，单独归类。
 - `seethefile` 是 32 位，需要 32 位 libc；归档前先确认是否需要额外下载 `libc_32.so.6`。
 - `_vendor/` 下的二进制只用于分析；正式归档的副本在模式目录里，用 `git add -f` 提交。
+- `labs/lab_srop_baby` 为**自造实验**（无外部来源），只需 `as` + `ld` 即可复现，
+  用来补齐 `srop` 模式；不依赖上表中的任何附件或 libc。

