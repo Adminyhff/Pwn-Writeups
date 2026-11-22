@@ -43,7 +43,8 @@ Pwn Writeups/
 │   ├── 13_putsorsys_{speedrun,exp}.*
 │   ├── 18_repeater_{speedrun,exp}.*
 │   ├── 19_pwnable_silverbullet_{speedrun,exp}.*
-│   └── 对应二进制 + libc.so.6
+│   ├── 20_bbbaby_pwn1_{speedrun,exp}.*
+│   └── 对应二进制 + libc.so.6 / libc-2.23.so
 ├── format_string_write/               # printf(user_input) + %n 任意写
 │   ├── README.md
 │   ├── 08_fifth_space_2019_pwn5_{speedrun,exp}.*
@@ -71,7 +72,7 @@ Pwn Writeups/
 | --- | --- | --- |
 | `network_interaction_free_shell` | 程序正常逻辑直接给 shell，无内存破坏点 | `01_test_your_nc`、`17_others_shellcode` |
 | `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门 | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary` |
-| `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")` | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet` |
+| `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")` | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1` |
 | `format_string_write` | `printf(user_input)`，用 `%n` 改全局变量或 GOT | `08_fifth_space_2019_pwn5` |
 | `stack_local_var_overwrite` | 栈溢出改相邻局部变量，绕过条件判断 | `04_ciscn_2019_n_1` |
 | `heap_uaf` | free 后指针仍被引用，重新分配旧对象改写函数指针 | `14_hitcontraining_uaf` |
@@ -122,6 +123,9 @@ python 18_repeater_exp.py LOCAL
 I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
 python 19_pwnable_silverbullet_exp.py LOCAL
+
+# 20 是任意写 + canary 绕过（改 __stack_chk_fail@got）
+python 20_bbbaby_pwn1_exp.py LOCAL
 
 cd ../format_string_write
 python 08_fifth_space_2019_pwn5_exp.py LOCAL     # 本地需要 i386 loader

@@ -60,6 +60,7 @@
 | 17 | `others_shellcode` | 网络交互 / 白给 Shell | `network_interaction_free_shell` | `main -> getShell -> int 0x80 execve` | N/A | 无地址 / 无偏移 |
 | 18 | `repeater` | canary leak + ret2libc / 64 位回显型溢出 | `ret2libc` | `puts(buf)` 泄 canary，`puts(read@got)` 泄 libc，回 `main` 二阶段 | **0x28**（canary 0x28，RIP 0x38） | `pop rdi;ret=0x400933`、`ret=0x400934`、`read@got=0x601030`、`main=0x4007d9` |
 | 19 | `pwnable_silverbullet` | 逻辑 bug 型栈越界 + ret2libc / 32 位 | `ret2libc` | `strncat` 的 NUL 打坏 `power`，`power` 与 `strlen(desc)` 失配后越界写；`beat` 获胜逼出 `main` 的 `ret` | 越界 **0x2f**（起点 `ebp-0x3`） | `read@plt=0x8048490`、`puts@plt=0x80484a8`、`read@got=0x804afd0`、`main=0x8048954` |
+| 20 | `bbbaby_pwn1` | 任意写 + canary 绕过 + ret2libc / 64 位 | `ret2libc` | 8 字节任意写把 `__stack_chk_fail@got` 改成 `leave;ret`，canary 失败反而成为栈迁移入口；CSU ROP leak libc 后把 `atoi@got` 改成 `system` | **0x110**（canary 0x108） | `leave;ret=0x40086a`、`csu_pop=0x4009fa`、`csu_call=0x4009e0`、`__stack_chk_fail@got=0x601020`、`atoi@got=0x601040` |
 
 ---
 
@@ -476,6 +477,40 @@ beat:          hp -= power; if (hp <= 0) "Oh ! You win !!" -> main return
   `puts(puts@got)` 只会打印一个空行。
 - 两轮：`puts(read@got)` + 回 `main` → `system("/bin/sh")`。
 
+### 3.20 `20_bbbaby_pwn1` → `ret2libc`
+
+speedrun 中的关键证据：
+
+```text
+64 位、No PIE、NX、partial RELRO、canary、stripped、6.4KB
+read_int() @ 0x4007c7 : 读 10 字节到 [rbp-0x20]，遇 '\n' 截断，return atoi(buf)
+main()     @ 0x40090b : sub rsp,0x120；buf = rbp-0x110；canary = rbp-0x8
+
+case 0 @ 0x40086c: puts("address:"); n = read_int(); read(0, (void*)n, 8)
+case 1 @ 0x4008bb: puts("size:");    n = read_int(); read(0, buf, n)
+其它值:            return  -> main 的 canary 校验与 ret
+
+四步：
+1) [0x601020] = 0x40086a   __stack_chk_fail@got -> leave; ret
+2) 溢出 buf -> saved rbp/ret（0x108 填充 + canary 乱填 + saved rbp + ROP），
+   再选 2 让 main return；canary 校验失败 -> 跳 leave;ret -> 直接执行 ROP
+3) ROP（__libc_csu_init）：puts(read@got) -> main   （leak libc）
+4) [0x601040] = system      atoi@got -> system
+   菜单发 "/bin/sh" -> read_int 内的 atoi(buf) 变成 system("/bin/sh")
+```
+
+结论：
+
+- 判定为 `ret2libc`：最终控制流仍是 leak libc + `system`，但它多了一个**任意地址写**原语。
+- 关键思路：**canary 校验失败的调用点本身可写**。`call __stack_chk_fail` 是 `jmp [got]`，
+  把 GOT 改成 `leave; ret`，失败路径就变成栈迁移入口，无需 leak canary。
+- 8 字节写用十进制地址（`atoi` 解析）；`read` 只发 1~7 字节就是部分覆写。
+- 无 `pop rdi` → `__libc_csu_init` 的 `pop rbx/rbp/r12/r13/r14/r15`（**0x4009fa**，不是 0x400a0a）
+  配 `mov rdx,r13; mov rsi,r14; mov edi,r15d; call [r12+rbx*8]`（0x4009e0）。
+- 第二轮不必再溢出：`atoi@got = system` 后，菜单输入 `/bin/sh` 直接执行。
+- 坑：`recvuntil(MENU)` 之后不能再用 `sendlineafter(MENU, ...)`（提示已被消费会死锁）；
+  leak 解析要跳过残留 `\n`，按“能让 libc 页对齐”筛。
+
 ---
 
 ## 4. 仓库结构映射（重构前 → 重构后）
@@ -501,6 +536,7 @@ beat:          hp -= power; if (hp <= 0) "Oh ! You win !!" -> main return
 | `others_shellcode`（根目录散落） | `network_interaction_free_shell/17_others_shellcode_*`、`network_interaction_free_shell/others_shellcode` |
 | `repeater`（根目录散落） | `ret2libc/18_repeater_*`、`ret2libc/repeater` |
 | `pwnable_silverbullet`（根目录散落） | `ret2libc/19_pwnable_silverbullet_*`、`ret2libc/pwnable_silverbullet` |
+| `[陇原战"疫"2021网络安全大赛]bbbaby/pwn1`（根目录散落） | `ret2libc/20_bbbaby_pwn1_*`、`ret2libc/bbbaby_pwn1`、`ret2libc/libc-2.23.so` |
 
 命名规则：
 
