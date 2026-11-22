@@ -58,6 +58,7 @@
 | 15 | `babyheap_Octf_2017` | heap / unsorted leak + fastbin + hook | `heap_exploitation` | fake 0x80 chunk -> `__malloc_hook` | `0x3C4B78` leak | `__malloc_hook=libc+0x3C4B10`、fake=`libc+0x3C41E9`、one_gadget=`libc+0x4527A` |
 | 16 | `babyfengshui_33c3_2016` | heap / 相邻对象指针改写 | `heap_exploitation` | `fgets@GOT` leak -> `free@GOT=system` | **0xC0** | `FGETS_GOT=0x804B014`、`FREE_GOT=0x804B010` |
 | 17 | `others_shellcode` | 网络交互 / 白给 Shell | `network_interaction_free_shell` | `main -> getShell -> int 0x80 execve` | N/A | 无地址 / 无偏移 |
+| 18 | `repeater` | canary leak + ret2libc / 64 位回显型溢出 | `ret2libc` | `puts(buf)` 泄 canary，`puts(read@got)` 泄 libc，回 `main` 二阶段 | **0x28**（canary 0x28，RIP 0x38） | `pop rdi;ret=0x400933`、`ret=0x400934`、`read@got=0x601030`、`main=0x4007d9` |
 
 ---
 
@@ -407,6 +408,38 @@ PIE / NX 是干扰项
 - 没有可控输入，不存在栈/堆破坏；利用只是连接和交互。
 - 与 01 的区别：01 是 `system@plt`，17 是手写 `int 0x80` shellcode；两者都归入白给 shell 模式。
 
+### 3.18 `18_repeater` → `ret2libc`
+
+speedrun 中的关键证据：
+
+```text
+题型：栈溢出 + canary leak + ret2libc（两阶段）
+64 位、No PIE、Canary、NX、Partial RELRO、stripped
+
+main:
+  setvbuf(stdin/stdout, 全不缓冲)
+  puts(banner)
+loop:
+  printf("What do you want me to repeat with you? Please enter it to me:")
+  read(0, buf, 0x100)        # char buf[0x28] @ rbp-0x30
+  puts(buf)                  # 回显：canary / libc 泄漏点
+  printf("Do you want to continue?")
+  scanf("%d", &g)            # g == 0 继续循环，!= 0 打印 stupid!!! 后 return
+  getchar()
+
+canary @ rbp-0x8；buffer -> canary = 0x28；buffer -> saved RIP = 0x38
+puts@plt=0x400610；read@got=0x601030；pop rdi;ret=0x400933；ret=0x400934
+```
+
+结论：
+
+- `read(0, buf, 0x100)` 对 `buf[0x28]` 无边界，但 `__stack_chk_fail` 挡在前面。
+- `puts(buf)` 打印到 NUL 为止：多发 1 个字节覆盖 canary 低字节（`0x00` → `'B'`），
+  canary 剩下 7 字节随回显一起吐出，`canary = u64(b"\x00" + tail7)`。
+- 循环控制语义是反的：`0` 才继续；想触发 `return` 走 ROP 必须发非 0。
+- 两阶段：`puts(read@got)` + 回 `main` 泄 libc；`ret` 对齐后 `system("/bin/sh")`。
+- 注意 `read` 短读：泄漏长度不对就整条连接重来（脚本内重试 5 次）。
+
 ---
 
 ## 4. 仓库结构映射（重构前 → 重构后）
@@ -430,6 +463,7 @@ PIE / NX 是干扰项
 | `babyheap_Octf_2017`（根目录散落） | `heap_exploitation/15_babyheap_Octf_2017_*`、`heap_exploitation/babyheap_Octf_2017` |
 | `babyfengshui_33c3_2016`（根目录散落） | `heap_exploitation/16_babyfengshui_33c3_2016_*`、`heap_exploitation/babyfengshui_33c3_2016` |
 | `others_shellcode`（根目录散落） | `network_interaction_free_shell/17_others_shellcode_*`、`network_interaction_free_shell/others_shellcode` |
+| `repeater`（根目录散落） | `ret2libc/18_repeater_*`、`ret2libc/repeater` |
 
 命名规则：
 
@@ -442,3 +476,67 @@ PIE / NX 是干扰项
 ```
 
 > 原始二进制保留原名，方便直接复制题目中的 `file` / `checksec` / `objdump` 命令。
+
+---
+
+## 5. 待解登记（pending）
+
+以下二进制仍留在仓库根目录，尚未归档到模式目录，避免“强行套模板”造成错误结论。
+两份分析已做到“定性 + 阻塞点明确”，后续可以直接接着做。
+
+### 5.1 `rec_33c3_2016`（33C3 CTF 2016 / 32 位计算器）
+
+```text
+32 位 i386、动态链接；程序是一个“计算器”交互（读表达式、算结果）
+已定位：符号分派表在 0xd3e 附近；疑似未初始化函数指针位于 ebp-0x20
+阻塞点：函数指针的写入路径没有在可控输入里找到，需要动态验证“未初始化槽位”假设
+```
+
+下一步：
+
+1. 用 `gdb` 在 `0xd3e` 断下，观察 `ebp-0x20` 在第一次分派前的实际值来源。
+2. 确认该槽位是否可被输入间接写入（运算结果 / 栈上残留）。
+3. 若确认可控，再判定是 `ret2text`（跳到二进制内）还是 `ret2libc`。
+
+### 5.2 `judgement_mna_2016`（MNA 2016 / flag 判定器）
+
+```text
+32 位 i386、No PIE（EXEC）、Canary、NX、Partial RELRO
+
+init():
+  setbuf(stdin/stdout, NULL)
+  load_flag("flag.txt", 0x804a0a0, 0x40)   # flag 读进全局 flag，固定地址
+main:
+  printf("Flag judgment system\nInput flag >>")
+  getnline(buf, 0x40)   # fgets(buf, 0x40, stdin)，buf @ ebp-0x4c
+  printf(buf)           # <-- 格式化字符串漏洞
+  if (!strcmp(buf, flag)) puts("Correct flag!!"); else puts("Wrong flag...")
+
+getnline 里有一层过滤：strlen 之后逐字节 isprint()，非可打印字符直接 return 0
+（main 打印 "Unprintable character" 后退出）=> 无法发送二进制地址
+```
+
+实测结论（本地 i386 loader + `%1$p..%264$p` 全扫）：
+
+```text
+arg 43  = buf 起始（"AAAA"）
+arg 35  = 0x804a030  = strchr@GOT（_dl_runtime_resolve 残留）
+arg 72  = 0x804a000  = _GLOBAL_OFFSET_TABLE_
+arg 105 = 0x804872b  = main
+args 1..264 中不存在 0x804a0a0（flag），也不存在 0x804a010（strcmp@GOT）
+```
+
+阻塞点：
+
+- `isprint` 过滤让“把 `0x804a0a0` 塞进格式串”这条路彻底断掉（地址字节含 `0x08` / `0x80` / `0xa0`）。
+- 能拿到指针槽位只有 `strchr@GOT`（`0x804a030`）与 GOT 基址（`0x804a000`），
+  而 `strcmp` / `puts` 都在 `printf(buf)` **之后**才惰性绑定，不会留下指针槽位。
+- 可写目标若只有 `strchr@GOT`，写出后程序已无 `strchr` 调用，等于空写。
+
+下一步方向（待验证）：
+
+1. ~~顺序打印读到 `flag`~~：已实测 —— `%35$s` 只吐出 4 个 GOT 指针（16 字节）就被
+   `0x804a040` 的零字节截断，`%72$s` 只吐 3 字节，顺序读跨不到 `0x804a0a0`。
+2. 检查 `strchr@GOT` 的 LSB 改写能否把 `strchr` 重定向到同页内的可用函数。
+3. 用 `%n` 把 `strchr@GOT` 改成 `main`（`0x804872b` ≈ 134M 字符，可接受），
+   让程序跑第二轮 —— 第二轮 `strcmp` / `puts` 已解析，才有机会拿到 `0x804a010` 槽位。
