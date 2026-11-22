@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按八类利用原语（exploit primitive）划分：
+本仓库目前按九类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -15,6 +15,7 @@
 | `ret2text` | 栈溢出 + ret2text | 覆盖 saved RIP，跳转到二进制 `.text` 内已有的后门函数或代码片段 |
 | `ret2libc` | 栈溢出 + leak libc | 覆盖 saved RIP，先 leak libc 地址，再返回 libc 的 `system("/bin/sh")` |
 | `ret2shellcode` | 可执行内存 + shellcode | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后把 shellcode 写进去并跳转 |
+| `stack_pivot` | 栈空间不足 → 换栈 | 溢出字节数装不下 ROP 链，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` / mmap 再执行长链 |
 | `format_string_write` | 格式化字符串任意写 | `printf(user_input)`，用 `%n` 改全局变量 / GOT / 返回地址 |
 | `stack_local_var_overwrite` | 栈溢出改局部变量 / 条件绕过 | 只覆盖与缓冲区相邻的局部变量，使条件判断成立，不控制 RIP |
 | `heap_uaf` | 释放后使用 | free 后指针仍被引用，重新分配旧对象，改写函数指针 / vtable / 控制流 |
@@ -30,6 +31,7 @@
 3. NX 是否关闭（`GNU_STACK=RWE`），且能拿到可执行内存的地址？
    └─ 是 → ret2shellcode
 4. 溢出的目标是 saved RIP 吗？
+   ├─ 是，但可用字节数不足以放下完整 ROP 链 → 先 stack_pivot
    ├─ 是，且跳转到二进制内已有代码 → ret2text
    ├─ 是，但需要 leak libc 才能调用 system → ret2libc
    └─ 否，只是改相邻局部变量 → stack_local_var_overwrite
@@ -65,6 +67,7 @@
 | 19 | `pwnable_silverbullet` | 逻辑 bug 型栈越界 + ret2libc / 32 位 | `ret2libc` | `strncat` 的 NUL 打坏 `power`，`power` 与 `strlen(desc)` 失配后越界写；`beat` 获胜逼出 `main` 的 `ret` | 越界 **0x2f**（起点 `ebp-0x3`） | `read@plt=0x8048490`、`puts@plt=0x80484a8`、`read@got=0x804afd0`、`main=0x8048954` |
 | 20 | `bbbaby_pwn1` | 任意写 + canary 绕过 + ret2libc / 64 位 | `ret2libc` | 8 字节任意写把 `__stack_chk_fail@got` 改成 `leave;ret`，canary 失败反而成为栈迁移入口；CSU ROP leak libc 后把 `atoi@got` 改成 `system` | **0x110**（canary 0x108） | `leave;ret=0x40086a`、`csu_pop=0x4009fa`、`csu_call=0x4009e0`、`__stack_chk_fail@got=0x601020`、`atoi@got=0x601040` |
 | 21 | `pwnable_start` | ret2shellcode / 栈可执行 / 32 位静态汇编 | `ret2shellcode` | `read(0, esp, 0x3c)` 一次溢出即可覆盖返回地址，且 `push esp` 让栈地址天然泄漏；`GNU_STACK=RWE` 直接执行栈上 `execve("/bin/sh")` | **0x14**（shellcode 在 0x18） | `leak=0x8048087`、payload 基址 `leak-4`、shellcode 21 字节 |
+| 22 | `ropemporium_pivot` | stack pivot + 两阶段 .so leak / 64 位 | `stack_pivot` | `read(0, rbp-0x20, 0x40)` 只给 0x18 可用字节 → `pop rax`+`xchg rsp,rax` 迁到程序打印的 `heap+0xFFFF00`；CSU 链先调 `[foothold@got]` 触发懒绑定再 `puts` 泄漏 libpivot 基址，回 main 二次迁移打 `ret2win` | **0x28**（仅 0x40 上限） | `pop rax=0x4009bb`、`xchg rsp,rax=0x4009bd`、CSU `0x400a2a`/`0x400a10`、`foothold=0x96a`、`ret2win=0xa81` |
 
 ---
 
@@ -569,6 +572,61 @@ ret                      ; 取 [E-8]，已被覆盖
 
 ---
 
+### 3.22 `22_ropemporium_pivot` → `stack_pivot`
+
+```text
+64 位 amd64、No PIE（EXEC）、NX、无 canary、partial RELRO、not stripped
+自带 libpivot.so（RUNPATH=.）：foothold_function @0x96a、ret2win @0xa81（差 0x117）
+```
+
+`main` / `pwnme`：
+
+```text
+main @0x400847:
+  setvbuf / puts("pivot by ROP Emporium") / puts("x86_64")
+  heap = malloc(0x1000000)
+  arg  = heap + 0xFFFF00
+  pwnme(arg)
+
+pwnme @0x4008f1:
+  memset(rbp-0x20, 0, 0x20)
+  printf("The Old Gods kindly bestow upon you a place to pivot: %p\n", arg)
+  puts("Send a ROP chain now and it will land there"); printf("> ")
+  read(0, arg, 0x100)            <-- 长链写堆
+  puts("Thank you!"); puts("Now please send your stack smash"); printf("> ")
+  read(0, rbp-0x20, 0x40)        <-- 栈溢出，只有 0x40 字节
+  puts("Thank you!"); leave; ret
+```
+
+判定依据：
+
+1. 溢出上限 0x40，扣掉 buf(0x20)+saved rbp(0x8) 只剩 **0x18 = 3 个 qword**，
+   放不下 leak 链 → 触发 §1 判定顺序第 4 条的 `stack_pivot`。
+2. 程序自己打印 `heap+0xFFFF00`，迁移目标地址不需要额外 leak。
+3. `usefulGadgets` 里的 `xchg rsp, rax; ret`（0x4009bd）+ `pop rax`（0x4009bb）是现成迁移工具。
+
+三段式利用：
+
+```text
+栈溢出：'A'*0x28 + pop_rax + pivot + xchg_rsp_rax
+堆链1：CSU 调 [foothold@got]（触发懒绑定）
+       CSU 调 puts(foothold@got)（泄漏 6 字节地址）
+       ret -> main
+堆链2：ret2win = leak - 0x96a + 0xa81
+栈溢出（第二轮）：同样的三步迁移
+```
+
+坑点：
+
+- **`call [r12+rbx*8]` 是内存间接调用**：`r12` 必须放 GOT 项地址（`0x601040`），
+  传 `foothold_function@plt`（0x400720）会变成 `call [0x400720]` → 静默 SIGSEGV。
+- **必须先调用一次 `foothold_function`**：懒绑定，否则 GOT 里是 PLT 桩地址，
+  算出的 libpivot 基址完全错误。
+- `mov edi, r13d` 只取低 32 位 → CSU 传参不能传堆地址。
+- 阶段 1 链 248 字节 / `read` 上限 256，加 gadget 前先算长度。
+
+---
+
 ## 4. 仓库结构映射（重构前 → 重构后）
 
 | 重构前（按题目建目录） | 重构后（按模式归档） |
@@ -594,6 +652,7 @@ ret                      ; 取 [E-8]，已被覆盖
 | `pwnable_silverbullet`（根目录散落） | `ret2libc/19_pwnable_silverbullet_*`、`ret2libc/pwnable_silverbullet` |
 | `[陇原战"疫"2021网络安全大赛]bbbaby/pwn1`（根目录散落） | `ret2libc/20_bbbaby_pwn1_*`、`ret2libc/bbbaby_pwn1`、`ret2libc/libc-2.23.so` |
 | pwnable.tw `start`（外部下载，`_vendor/start`） | `ret2shellcode/21_pwnable_start_*`、`ret2shellcode/pwnable_start` |
+| ROP Emporium `pivot`（外部下载，`_vendor/pivot/`） | `stack_pivot/22_ropemporium_pivot_*`、`stack_pivot/pivot`、`stack_pivot/libpivot.so` |
 
 命名规则：
 

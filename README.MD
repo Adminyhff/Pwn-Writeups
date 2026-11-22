@@ -49,6 +49,11 @@ Pwn Writeups/
 │   ├── README.md
 │   ├── 21_pwnable_start_{speedrun,exp}.*
 │   └── pwnable_start
+├── stack_pivot/                       # 栈空间不足 -> 迁移到堆/可控内存
+│   ├── README.md
+│   ├── 22_ropemporium_pivot_{speedrun,exp}.*
+│   ├── pivot
+│   └── libpivot.so
 ├── format_string_write/               # printf(user_input) + %n 任意写
 │   ├── README.md
 │   ├── 08_fifth_space_2019_pwn5_{speedrun,exp}.*
@@ -78,6 +83,7 @@ Pwn Writeups/
 | `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门 | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary` |
 | `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")` | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1` |
 | `ret2shellcode` | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后执行栈/堆上 shellcode | `21_pwnable_start` |
+| `stack_pivot` | 溢出空间不足，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` 再执行长链 | `22_ropemporium_pivot` |
 | `format_string_write` | `printf(user_input)`，用 `%n` 改全局变量或 GOT | `08_fifth_space_2019_pwn5` |
 | `stack_local_var_overwrite` | 栈溢出改相邻局部变量，绕过条件判断 | `04_ciscn_2019_n_1` |
 | `heap_uaf` | free 后指针仍被引用，重新分配旧对象改写函数指针 | `14_hitcontraining_uaf` |
@@ -135,6 +141,10 @@ python 20_bbbaby_pwn1_exp.py LOCAL
 cd ../ret2shellcode
 # 21 是 32 位静态汇编，栈可执行，直接 ret2shellcode
 python 21_pwnable_start_exp.py            # 当前目录需有 flag.txt
+
+cd ../stack_pivot
+# 22 是栈迁移（pivot），RUNPATH=. 已内置
+python 22_ropemporium_pivot_exp.py        # 当前目录需有 flag.txt
 
 cd ../format_string_write
 python 08_fifth_space_2019_pwn5_exp.py LOCAL     # 本地需要 i386 loader
