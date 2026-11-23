@@ -56,12 +56,14 @@ for i in range(12):
 | 题目 | 架构 / 链接 | 沙箱内容 | 输入方式 | 放行的 syscall |
 | --- | --- | --- | --- | --- |
 | `23_pwnable_orw` | i386 / 动态 / 栈可执行 | `prctl` + 12 条 BPF | `read(0, 0x804a060, 0xc8)` 后 `call` | `open(5)`、`read(3)`、`write(4)`、`exit(1)`、`exit_group(252)`、`rt_sigreturn(173)`、`sigreturn(119)` |
+| `24_easyroptocol` | amd64 / 动态 / No PIE / NX / partial RELRO | `prctl` + 8 条 BPF（立即数直接铺在栈上，不在 `.rodata`） | 4 条 0x1000 message，选项 3 叠加 `memcpy` 到 `rbp-0x3020` | 除 `execve(59)` / 非 x86_64 / x32 外全部放行（`open/read/write/exit` 都可用） |
 
 关键地址：
 
 | 题目 | 关键量 |
 | --- | --- |
 | `23_pwnable_orw` | shellcode 落点 `0x804a060`、上限 `0xc8`、BPF 表 `0x8048640` |
+| `24_easyroptocol` | buf `rbp-0x3020`、每条 `memcpy` 增长 `0xfe8`、saved RIP `buf+0x3028`、chain 在消息 4 `+0x88`、CSU `0x401baa/0x401b90`、bss 暂存 `0x404700` |
 
 ---
 
@@ -70,15 +72,19 @@ for i in range(12):
 ```bash
 cd '/home/yfhd5/Pwn Writeups/sandbox_seccomp'
 
-# 1) 生成本地可执行版（现代内核 .bss 是 RW，需要给 PT_LOAD 加 PF_X）
+# 1) 仅 23 需要：生成本地可执行版（现代内核 .bss 是 RW，需要给 PT_LOAD 加 PF_X）
 python make_local_exec.py
 
-# 2) 当前目录需有 flag.txt，然后跑
+# 2) 23：当前目录需有 flag.txt，然后跑
 python 23_pwnable_orw_exp.py
+
+# 3) 24：64 位叠加溢出 + 两阶段 ORW（本地自动建临时 flag.txt）
+python 24_easyroptocol_exp.py
+python 24_easyroptocol_exp.py remote HOST PORT   # 远端用附件 libc-2.31.so
 ```
 
-> 本地必须用 `orw_local_exec`；原版 `orw` 只用于远程/取证。
-> 原因见下节。
+> 23 本地必须用 `orw_local_exec`；原版 `orw` 只用于远程/取证（原因见下节）。
+> 24 是标准动态 ELF，本地直接跑，libc 路径由 `io.libs()` 自动识别。
 
 ---
 
@@ -110,3 +116,9 @@ LOAD  0x000f08 0x08049f08 ... RWE 0x1000
 4. **32 位/64 位 syscall 号混用**：32 位 `open`=5、`read`=3、`write`=4；
    64 位是 `open`=2、`read`=0、`write`=1，而且很多沙箱只给 `openat`(257)。
 5. **本地跑不动就以为 exp 错**：先看 `readelf -lW` 的段 flags 和内核 NX 行为。
+6. **把单次 `memcpy` 当成 `0x1000` 增长**：chunk 可用区尾部是下一个 chunk 的
+   `prev_size`（分配状态下为 0），实际每条只增长 `0xfe8`；`easyroptocol` 必须凑满
+   4 条消息才够到 saved RIP（`buf+0x3028`）。
+7. **菜单是 `read(0, buf, 8)` 不是 `readline`**：必须一次写满 8 字节
+   （`b"1\n" + b"\x00"*6`），否则消息头会被这次读入吞掉，或者后续
+   `read(0x1000)` 被 TCP 分段截断。
