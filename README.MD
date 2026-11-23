@@ -44,7 +44,8 @@ Pwn Writeups/
 │   ├── 18_repeater_{speedrun,exp}.*
 │   ├── 19_pwnable_silverbullet_{speedrun,exp}.*
 │   ├── 20_bbbaby_pwn1_{speedrun,exp}.*
-│   └── 对应二进制 + libc.so.6 / libc-2.23.so
+│   ├── 25_rec_33c3_2016_{speedrun,exp}.*
+│   └── 对应二进制 + libc.so.6 / libc-2.23.so / libc-2.24.so
 ├── ret2shellcode/                     # NX 关闭 + 栈上 shellcode
 │   ├── README.md
 │   ├── 21_pwnable_start_{speedrun,exp}.*
@@ -98,7 +99,7 @@ Pwn Writeups/
 | --- | --- | --- |
 | `network_interaction_free_shell` | 程序正常逻辑直接给 shell，无内存破坏点 | `01_test_your_nc`、`17_others_shellcode` |
 | `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门 | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary` |
-| `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")` | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1` |
+| `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")`（25 是“未初始化函数指针 + `esp` 泄漏栈喷”的变体，无栈溢出） | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1`、`25_rec_33c3_2016` |
 | `ret2shellcode` | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后执行栈/堆上 shellcode | `21_pwnable_start` |
 | `stack_pivot` | 溢出空间不足，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` 再执行长链 | `22_ropemporium_pivot` |
 | `sandbox_seccomp` | 程序装 seccomp BPF，`execve` 被拦，只能 `open`+`read`+`write` 读 flag | `23_pwnable_orw`、`24_easyroptocol` |
@@ -156,6 +157,14 @@ python 19_pwnable_silverbullet_exp.py LOCAL
 
 # 20 是任意写 + canary 绕过（改 __stack_chk_fail@got）
 python 20_bbbaby_pwn1_exp.py LOCAL
+
+# 25 是 32 位 PIE + FULL RELRO，无栈溢出：未初始化函数指针 + Polish esp 泄漏
+# LOCAL 必须给出 i386 loader（I386_LD / I386_LIBPATH），否则退回本机 /lib/ld-linux.so.2
+I386_LD=/tmp/libc224/root/lib/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc224/root/lib/i386-linux-gnu \
+python 25_rec_33c3_2016_exp.py LOCAL
+LIBC=./libc-2.24.so HOST=target.example.com PORT=9999 \
+python 25_rec_33c3_2016_exp.py
 
 cd ../ret2shellcode
 # 21 是 32 位静态汇编，栈可执行，直接 ret2shellcode

@@ -41,6 +41,7 @@
 | `18_repeater` | amd64 / 动态 / stripped | 循环 `read(0, buf, 0x100)` + `puts(buf)`，canary | **0x28**（canary 0x28，saved RIP 0x38） | `puts(buf)` 打 canary，再 `puts(read@got)` 回 `main` | `ret` 对齐后 `system("/bin/sh")` |
 | `19_pwnable_silverbullet` | i386 / 动态 / not stripped | `strncat` 把 NUL 写进 `power`，`power` 与 `strlen(desc)` 失配 | 越界 **0x2f**（起点 `ebp-0x3`） | `beat` 判定获胜逼出 `main` 的 `ret`，`puts(read@got)` 回 `main` | `system("/bin/sh")`（整条链无 `\x00`） |
 | `20_bbbaby_pwn1` | amd64 / 动态 / stripped | menu：`read(0, (void*)n, 8)` + `read(0, buf, n)`，canary | **0x110**（canary 0x108） | 改 `__stack_chk_fail@got`=`leave;ret` 绕 canary，CSU `puts(read@got)` 回 `main` | 改 `atoi@got`=`system`，菜单发 `/bin/sh` |
+| `25_rec_33c3_2016` | i386 / 动态 / stripped / PIE + Canary + FULL RELRO | menu：note `read_line(buf, 0x14)`、Polish 求和、Sign | N/A（**无栈溢出**） | note 泄漏 `text+0x6fb`；Polish 求和每轮 `esp-=8`，把 `puts` / `lsm@got` 喷到 `v1` / `[esp]`，`Sign(0)` 调用 | 同样喷 `[system, "/bin/sh"]`，`Sign(0)` 调用 |
 
 关键地址：
 
@@ -54,6 +55,7 @@
 | `18_repeater` | `puts@plt=0x400610`、`read@got=0x601030`、`pop rdi;ret=0x400933`、`ret=0x400934`、`main=0x4007D9` |
 | `19_pwnable_silverbullet` | `read@plt=0x8048490`、`puts@plt=0x80484A8`、`read@got=0x804AFD0`、`main=0x8048954`、`pop3=0x8048A79` |
 | `20_bbbaby_pwn1` | `leave;ret=0x40086A`、`csu_pop=0x4009FA`、`csu_call=0x4009E0`、`__stack_chk_fail@got=0x601020`、`read@got=0x601028`、`atoi@got=0x601040` |
+| `25_rec_33c3_2016` | `puts@plt=text+0x520`、`___libc_start_main@got=text+0x2FE0`、note 泄漏 `text+0x6FB`、`call [ebp-0x20]=text+0xD3E`、Polish `esp` 每轮 -8、填充 **0x63** |
 
 Payload 核心：
 
@@ -152,6 +154,7 @@ p.sendlineafter(b"your choice", b"/bin/sh")
 | `18_repeater_speedrun.md` / `18_repeater_exp.py` | canary leak（`puts(buf)` 型）+ 两阶段 ret2libc，含短读重试 |
 | `19_pwnable_silverbullet_speedrun.md` / `19_pwnable_silverbullet_exp.py` | 逻辑 bug 型栈越界（`strncat` + `power` 失配）+ 两轮 ret2libc |
 | `20_bbbaby_pwn1_speedrun.md` / `20_bbbaby_pwn1_exp.py` | 8 字节任意写 + `__stack_chk_fail@got` 绕 canary + CSU ROP + `atoi@got` 改 `system` |
+| `25_rec_33c3_2016_speedrun.md` / `25_rec_33c3_2016_exp.py` | 未初始化函数指针 + Polish `esp` 泄漏栈喷 + 两阶段 ret2libc（32 位 PIE / FULL RELRO，无栈溢出） |
 | `[NewStarCTF 2023 公开赛道]ret2libc` | 07 的题目二进制 |
 | `jarvisoj_level4` | 10 的题目二进制 |
 | `铁人三项（第五赛区）2018_rop` | 11 的题目二进制 |
@@ -160,6 +163,7 @@ p.sendlineafter(b"your choice", b"/bin/sh")
 | `repeater` | 18 的题目二进制（stripped，64 位） |
 | `pwnable_silverbullet` | 19 的题目二进制（not stripped，32 位） |
 | `bbbaby_pwn1` / `libc-2.23.so` | 20 的题目二进制（stripped，64 位）与附件 libc |
+| `rec_33c3_2016` / `libc-2.24.so` | 25 的题目二进制（stripped，32 位 PIE）与本地复现用 i386 libc 2.24-3ubuntu2.2 |
 
 > 这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
 
@@ -215,6 +219,14 @@ python 19_pwnable_silverbullet_exp.py LOCAL
 python 20_bbbaby_pwn1_exp.py LOCAL
 LIBC=./libc-2.23.so HOST=target.example.com PORT=9999 \
 python 20_bbbaby_pwn1_exp.py
+
+# 25：未初始化函数指针 + Polish esp 泄漏（32 位 PIE / FULL RELRO，无栈溢出）
+# LOCAL 需要 i386 loader；不设 LIBC 时自动用 I386_LIBPATH/libc.so.6
+I386_LD=/tmp/libc224/root/lib/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc224/root/lib/i386-linux-gnu \
+python 25_rec_33c3_2016_exp.py LOCAL
+LIBC=./libc-2.24.so HOST=target.example.com PORT=9999 \
+python 25_rec_33c3_2016_exp.py
 ```
 
 CTF² 等 TLS 平台：
@@ -249,6 +261,14 @@ Canary + read(0, buf, N) + puts(buf) 回显
 有 canary + 存在任意地址写（或可控长度读）
 = 不要死磕 canary leak：先把 __stack_chk_fail@got 改成 leave;ret / main，
   让校验失败路径变成栈迁移入口，再用 CSU 链 leak libc
+```
+
+```text
+32 位 PIE + FULL RELRO + Canary，但根本没有栈溢出
++ 菜单里有未初始化的函数指针（call eax / call [ebp-x] 前没赋值）
++ 某个循环的 sub esp / add esp 不配对（esp 泄漏，每轮 esp -= N）
+= 找一个 note / 回显泄漏 PIE base，再用 esp 泄漏把 (函数指针, 参数) 喷到深层栈，
+  把 call 变成任意函数调用：call puts(GOT) -> base -> call system("/bin/sh")
 ```
 
 一句话：**Stage 1 只负责 leak 和回 `main`；Stage 2 才打 `system`。别把 `See you next time` 当 leak。**

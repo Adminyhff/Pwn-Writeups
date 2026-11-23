@@ -79,6 +79,7 @@
 | 22 | `ropemporium_pivot` | stack pivot + 两阶段 .so leak / 64 位 | `stack_pivot` | `read(0, rbp-0x20, 0x40)` 只给 0x18 可用字节 → `pop rax`+`xchg rsp,rax` 迁到程序打印的 `heap+0xFFFF00`；CSU 链先调 `[foothold@got]` 触发懒绑定再 `puts` 泄漏 libpivot 基址，回 main 二次迁移打 `ret2win` | **0x28**（仅 0x40 上限） | `pop rax=0x4009bb`、`xchg rsp,rax=0x4009bd`、CSU `0x400a2a`/`0x400a10`、`foothold=0x96a`、`ret2win=0xa81` |
 | 23 | `pwnable_orw` | seccomp 沙箱 + ORW shellcode / 32 位 | `sandbox_seccomp` | `read(0, 0x804a060, 0xc8)` 后直接 `call` 缓冲区；BPF 只放行 `open/read/write/exit`，写 51 字节 ORW shellcode 读 `flag.txt` | N/A（无栈溢出） | shellcode 落点 `0x804a060`、上限 `0xc8`、BPF 表 `0x8048640` |
 | 24 | `easyroptocol` | seccomp 沙箱 + 4 槽 message 叠加溢出 / 64 位 | `sandbox_seccomp` | 选项 3 把 4 条 message 从 `+0x18` 起 `memcpy` 到 `rbp-0x3020`，每条只增长 `0xfe8`，第 4 次覆盖 saved RIP；BPF 只 KILL `execve`/x32；CSU `write` leak libc 后删 slot3 重建，用 `read` 把 open/exit 地址写进 bss，再 `open`×3 → `read(3)` → `write(1)` | **0x3028**（chain 在消息 4 的 `+0x88`） | `csu_pop=0x401baa`、`csu_call=0x401b90`、`ret=0x40101a`、`main=0x401a5e`、`write@got=0x404028`、`read@got=0x404040`、bss `0x404700` |
+| 25 | `rec_33c3_2016` | 未初始化函数指针 + Polish `esp` 泄漏栈喷 / 32 位 PIE | `ret2libc` | Sign 在 `n==0` 时 `call [ebp-0x20]` 而槽位未赋值；Polish 求和循环 `sub esp,8` + 2×`push` 却只 `add esp,8`，每轮 `esp-=8` 并把操作数写到 `[esp-0xc]`/`[esp-0x10]`；喷 **0x63** 个数字把 `puts` / `___libc_start_main@got` 精确落到 `v1` / 首个参数；note 泄漏 PIE base | N/A（**无栈溢出**） | `puts@plt=text+0x520`、`lsm@got=text+0x2fe0`、note leak `text+0x6fb`、`call eax=0xd3e` |
 | L1 | `lab_srop_baby`（自造） | SROP / 64 位静态汇编 | `srop` | `read(0, rsp, 0x400)` 溢出；只有 `syscall;ret` + `pop rax;ret`，无传参 gadget 无 libc → `rax=15` 触发 `rt_sigreturn`，sigframe 直接 `execve("/bin/sh")` | **0**（read 直接写 rsp） | `syscall;ret=0x401065`、`pop rax;ret=0x401068`、`bss=0x403010` |
 
 ---
@@ -804,6 +805,59 @@ stage2: 选项 2 删 slot3（chunk4 与 top 相邻，free 后并进 top）
 
 ---
 
+### 3.25 `25_rec_33c3_2016` → `ret2libc`（未初始化函数指针 + `esp` 泄漏）
+
+```text
+32 位 i386、动态、PIE、NX、Canary、FULL RELRO、stripped、9564 B
+菜单：0 Take note / 1 Read note / 2 Polish / 3 Infix / 4 Reverse Polish / 5 Sign / 6 Exit
+```
+
+判定依据：
+
+1. **没有任何可用的栈溢出。** `read_line@0x6c0` 唯一越界写是 `buf[size] = 0`
+   （1 个 NUL），note 的 `size=0x14` 与运算数 `size=0xc` 都正好落在 canary
+   最低字节，操作符 `size=2` 落在相邻 buffer；saved RIP 够不到。
+2. **`sign@0xcdb` 有未初始化函数指针。** `n > 0` 写 `0xc85`，`n < 0` 写 `0xcb0`，
+   `n == 0` 直接跳到 `0xd3b: mov eax,[ebp-0x20]` / `0xd3e: call eax`，槽位保持原值。
+   首次调用的残留值是 libc 的 `__libc_malloc`（本机 2.43 实测，`malloc(栈垃圾)` 返回
+   NULL 所以看起来无害），不可依赖。
+3. **槽位比一般局部变量深得多。** `sign` 由 `0xd57` 调用，而 `0xd57` 先做了
+   `sub esp,0x338`（这段空间从未使用），于是 `v1` 位于 `main_ebp-0x384`，
+   而 note 的 buffer 在 `main_ebp-0x50` —— note 只能泄漏，够不到 `v1`。
+4. **`polish_sum@0xaa3` 的 `'S'` 分支有 `esp` 泄漏。**
+   `b36: sub esp,8` + `push n` + `push n` + `call identity` + `b44: add esp,8`：
+   压了 16 字节只回收 8（`call` 的返回地址被 `ret` 弹掉），每轮 `esp -= 8`，
+   同时把 `n` 写到 `[esp-0xc]` 与 `[esp-0x10]`。这等价于一个“向低地址、
+   每 8 字节写两个相同 dword”的栈写原语。
+5. **note 泄漏 PIE base。** `buf` 复用后 `dword[0]` 是栈地址、`dword[1]` 是
+   `text + 0x6fb`（菜单 `read_line` 里 `call getchar` 的返回地址残留），
+   `puts(buf)` 直接打出来 → `text_base = u32(raw[4:8]) - 0x6fb`。
+6. **`call eax` 前不设参数寄存器**，参数就在栈上：`v1 = sign_ebp-0x20`，
+   `[esp+4]` 正好是我们喷的 `values[-1]` → `Sign(0)` 等价于 `v1(values[-1])`。
+
+栈距离计算：
+
+```text
+每轮只有 1 个 dword 能活到 Sign（另一份被随后的 printf 覆盖），相邻两轮相隔 8 字节
+起始写入点 -> v1（sign_ebp-0x20）相差 0x318 = 99*8
+-> 第 100 个操作数（下标 99）落 v1，第 101 个（下标 100）落 call 时的 [esp]
+-> 0x63 个填充 + values[99]=fp + values[100]=arg，共 0x65 个数字
+```
+
+利用：`text+0x520`（`puts@plt`）配 `text+0x2fe0`（`___libc_start_main@got`）
+→ leak libc；再喷 `[system, "/bin/sh"]` → shell。
+
+交互要点（详见 `ret2libc/25_rec_33c3_2016_speedrun.md`）：
+
+- `atoi` 饱和：地址必须按 **signed int32** 十进制发送，否则 `call 0x7fffffff`。
+- 填充数 `0x63` 由二进制自身栈帧决定，换 libc 不变。
+- note / `puts(GOT)` 都可能被 `0x00` 截断，需检查长度并重连。
+- FULL RELRO 与 Canary 都不需要绕：只读 GOT、只控制 `call` 目标。
+
+题目二进制归档为 `ret2libc/rec_33c3_2016`；本地复现用 i386 glibc
+2.24-3ubuntu2.2（`ret2libc/libc-2.24.so`，与 old-releases 的
+`libc6_2.24-3ubuntu2.2_i386.deb` 解包结果 md5 一致）。
+
 ### 3.L1 `lab_srop_baby` → `srop`（自造实验）
 
 ```text
@@ -865,25 +919,26 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 | `03_warmup_csaw_2016/` | `ret2text/03_warmup_csaw_2016_*` |
 | `04_ciscn_2019_n_1/` | `stack_local_var_overwrite/04_ciscn_2019_n_1_*` |
 | `05_get_started_3dsctf_2016/` | `ret2text/05_get_started_3dsctf_2016_*` |
-| `jarvisoj_level0`（根目录散落） | `ret2text/06_jarvisoj_level0_*`、`ret2text/jarvisoj_level0` |
-| `[NewStarCTF 2023 公开赛道]ret2libc`（根目录散落） | `ret2libc/07_newstarctf_2023_ret2libc_*`、`ret2libc/[NewStarCTF 2023 公开赛道]ret2libc` |
-| `[第五空间2019决赛]PWN5`（根目录散落） | `format_string_write/08_fifth_space_2019_pwn5_*`、`format_string_write/[第五空间2019决赛]PWN5` |
-| `[NewStarCTF 公开赛赛道]canary/`（根目录散落） | `ret2text/09_canary_*`、`ret2text/[NewStarCTF 公开赛赛道]canary/pwn` |
-| `jarvisoj_level4`（根目录散落） | `ret2libc/10_jarvisoj_level4_*`、`ret2libc/jarvisoj_level4` |
-| `铁人三项（第五赛区）2018_rop`（根目录散落） | `ret2libc/11_2018_rop_*`、`ret2libc/铁人三项（第五赛区）2018_rop` |
-| `bjdctf_2020_babyrop`（根目录散落） | `ret2libc/12_bjdctf_2020_babyrop_*`、`ret2libc/bjdctf_2020_babyrop` |
-| `putsorsys` + `libc.so.6`（根目录散落） | `ret2libc/13_putsorsys_*`、`ret2libc/putsorsys`、`ret2libc/libc.so.6` |
-| `hitcontraining_uaf`（根目录散落） | `heap_uaf/14_hitcontraining_uaf_*`、`heap_uaf/hitcontraining_uaf` |
-| `babyheap_Octf_2017`（根目录散落） | `heap_exploitation/15_babyheap_Octf_2017_*`、`heap_exploitation/babyheap_Octf_2017` |
-| `babyfengshui_33c3_2016`（根目录散落） | `heap_exploitation/16_babyfengshui_33c3_2016_*`、`heap_exploitation/babyfengshui_33c3_2016` |
-| `others_shellcode`（根目录散落） | `network_interaction_free_shell/17_others_shellcode_*`、`network_interaction_free_shell/others_shellcode` |
-| `repeater`（根目录散落） | `ret2libc/18_repeater_*`、`ret2libc/repeater` |
-| `pwnable_silverbullet`（根目录散落） | `ret2libc/19_pwnable_silverbullet_*`、`ret2libc/pwnable_silverbullet` |
-| `[陇原战"疫"2021网络安全大赛]bbbaby/pwn1`（根目录散落） | `ret2libc/20_bbbaby_pwn1_*`、`ret2libc/bbbaby_pwn1`、`ret2libc/libc-2.23.so` |
+| `jarvisoj_level0` | `ret2text/06_jarvisoj_level0_*`、`ret2text/jarvisoj_level0` |
+| `[NewStarCTF 2023 公开赛道]ret2libc` | `ret2libc/07_newstarctf_2023_ret2libc_*`、`ret2libc/[NewStarCTF 2023 公开赛道]ret2libc` |
+| `[第五空间2019决赛]PWN5` | `format_string_write/08_fifth_space_2019_pwn5_*`、`format_string_write/[第五空间2019决赛]PWN5` |
+| `[NewStarCTF 公开赛赛道]canary/` | `ret2text/09_canary_*`、`ret2text/[NewStarCTF 公开赛赛道]canary/pwn` |
+| `jarvisoj_level4` | `ret2libc/10_jarvisoj_level4_*`、`ret2libc/jarvisoj_level4` |
+| `铁人三项（第五赛区）2018_rop` | `ret2libc/11_2018_rop_*`、`ret2libc/铁人三项（第五赛区）2018_rop` |
+| `bjdctf_2020_babyrop` | `ret2libc/12_bjdctf_2020_babyrop_*`、`ret2libc/bjdctf_2020_babyrop` |
+| `putsorsys` + `libc.so.6` | `ret2libc/13_putsorsys_*`、`ret2libc/putsorsys`、`ret2libc/libc.so.6` |
+| `hitcontraining_uaf` | `heap_uaf/14_hitcontraining_uaf_*`、`heap_uaf/hitcontraining_uaf` |
+| `babyheap_Octf_2017`| `heap_exploitation/15_babyheap_Octf_2017_*`、`heap_exploitation/babyheap_Octf_2017` |
+| `babyfengshui_33c3_2016`| `heap_exploitation/16_babyfengshui_33c3_2016_*`、`heap_exploitation/babyfengshui_33c3_2016` |
+| `others_shellcode` | `network_interaction_free_shell/17_others_shellcode_*`、`network_interaction_free_shell/others_shellcode` |
+| `repeater` | `ret2libc/18_repeater_*`、`ret2libc/repeater` |
+| `pwnable_silverbullet` | `ret2libc/19_pwnable_silverbullet_*`、`ret2libc/pwnable_silverbullet` |
+| `[陇原战"疫"2021网络安全大赛]bbbaby/pwn1` | `ret2libc/20_bbbaby_pwn1_*`、`ret2libc/bbbaby_pwn1`、`ret2libc/libc-2.23.so` |
 | pwnable.tw `start`（外部下载，`_vendor/start`） | `ret2shellcode/21_pwnable_start_*`、`ret2shellcode/pwnable_start` |
 | ROP Emporium `pivot`（外部下载，`_vendor/pivot/`） | `stack_pivot/22_ropemporium_pivot_*`、`stack_pivot/pivot`、`stack_pivot/libpivot.so` |
 | pwnable.tw `orw`（外部下载，`_vendor/orw`） | `sandbox_seccomp/23_pwnable_orw_*`、`sandbox_seccomp/orw`、`sandbox_seccomp/make_local_exec.py` |
 | V&N 2022 校赛 `easyROPtocol`（附件目录 `easyROPtocol/`） | `sandbox_seccomp/24_easyroptocol_*`、`sandbox_seccomp/easyroptocol`、`sandbox_seccomp/libc-2.31.so` |
+| 33C3 CTF 2016 `rec` + 下载的 i386 glibc 2.24 | `ret2libc/25_rec_33c3_2016_*`、`ret2libc/rec_33c3_2016`、`ret2libc/libc-2.24.so` |
 | 自造实验（无外部来源） | `labs/lab_srop_baby/`（`src/chal.S` + `Makefile` + `exp.py` + `README.md`） |
 
 命名规则：
@@ -904,20 +959,13 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 
 以下二进制仍留在仓库根目录，尚未归档到模式目录，避免“强行套模板”造成错误结论。
 每节都做到“定性 + 阻塞点明确”，后续可以直接接着做。
+（`rec_33c3_2016` 已于 2026-11 解决，5.1 仅保留记录。）
 
-### 5.1 `rec_33c3_2016`（33C3 CTF 2016 / 32 位计算器）
+### ~~5.1 `rec_33c3_2016`~~ ✅ 已完成
 
-```text
-32 位 i386、动态链接；程序是一个“计算器”交互（读表达式、算结果）
-已定位：符号分派表在 0xd3e 附近；疑似未初始化函数指针位于 ebp-0x20
-阻塞点：函数指针的写入路径没有在可控输入里找到，需要动态验证“未初始化槽位”假设
-```
-
-下一步：
-
-1. 用 `gdb` 在 `0xd3e` 断下，观察 `ebp-0x20` 在第一次分派前的实际值来源。
-2. 确认该槽位是否可被输入间接写入（运算结果 / 栈上残留）。
-3. 若确认可控，再判定是 `ret2text`（跳到二进制内）还是 `ret2libc`。
+已定性为“未初始化函数指针 + Polish `esp` 泄漏栈喷 + 两阶段 ret2libc”，
+归档为 `ret2libc/25_rec_33c3_2016_*`，判定依据与栈距离计算见 §3.25，
+EXP 在本地 i386 glibc 2.24 / 2.43 下均稳定拿到 flag。
 
 ### 5.2 `judgement_mna_2016`（MNA 2016 / flag 判定器）
 

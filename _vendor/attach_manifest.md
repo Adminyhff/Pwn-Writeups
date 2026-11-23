@@ -11,6 +11,7 @@
 | pwnable.tw | `https://pwnable.tw/static/chall/<name>` | 直接 `curl -O`，返回 200 |
 | pwnable.tw libc | `https://pwnable.tw/static/libc/<file>` | 下载的 `libc-4e5dfd83…so` 经 `strings` + `readelf -n` 校验实际是 **Ubuntu GLIBC 2.24-9ubuntu2.2**（build-id `aad7dbe330…`），文件名里的哈希与 build-id 不符 |
 | ROP Emporium | `https://ropemporium.com/binary/<name>.zip` | zip 内是二进制 + `libpivot.so` + `flag.txt` |
+| Ubuntu old-releases | `http://old-releases.ubuntu.com/ubuntu/pool/main/g/glibc/libc6_2.24-3ubuntu2.2_i386.deb` | 33C3 CTF 2016 `rec` 的本地复现代替品：`dpkg -x` 后取 `lib/ld-linux.so.2` + `lib/i386-linux-gnu/libc.so.6`（md5 `79f8c0d940ae393b3ad1be40892c9c84`），已归档为 `ret2libc/libc-2.24.so` |
 
 ## 2. 保护矩阵（实测）
 
@@ -24,6 +25,7 @@
 | `seethefile` | i386 / 动态 | No | NX | 无 | partial | `fsop` | 待做 |
 | `death_note` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `shellcode` / heap | 待做 |
 | `libc-4e5dfd83….so` | amd64 glibc **2.24**（Ubuntu 2.24-9ubuntu2.2） | — | — | — | — | 实测 build-id `aad7dbe330…`，与文件名不符；**不能**当 `tcache_tear` 的 2.27 libc 用 | — |
+| `libc6_2.24-3ubuntu2.2_i386.deb`（解包） | i386 glibc **2.24-3ubuntu2.2**（md5 `79f8c0d9…`） | — | — | — | — | `ret2libc`（33C3 `rec` 本地复现） | ✅ 已归档为 `ret2libc/libc-2.24.so` |
 
 ## 3. 备注
 
@@ -37,3 +39,11 @@
   2.27-3ubuntu1，build-id `b417c0ba…`，可作同代参考）。
 - `labs/lab_srop_baby` 为**自造实验**（无外部来源），只需 `as` + `ld` 即可复现，
   用来补齐 `srop` 模式；不依赖上表中的任何附件或 libc。
+- 33C3 CTF 2016 `rec` 没有官方 libc 附件：原题跑在 Ubuntu 16.10
+  （glibc **2.24-3ubuntu2**）。仓库归档的 `ret2libc/libc-2.24.so` 是
+  old-releases 的 `libc6_2.24-3ubuntu2.2_i386.deb` 解包结果（md5 `79f8c0d9…`），
+  `__libc_start_main` 偏移与 2ubuntu2 相同（`0x18180`），但 `system`
+  （`0x3b020` vs 原版 `0x3a8b0`）与 `/bin/sh`（`0x15f7cf` vs `0x15cbcf`）不同；
+  打远程时以 leak 出来的 `__libc_start_main` 为准换对应 libc。
+- i386 loader 也要一并解包：`lib/ld-linux.so.2` + `lib/i386-linux-gnu/`，
+  EXP 里用 `I386_LD` / `I386_LIBPATH` 指过去（`--library-path` 方式启动）。
