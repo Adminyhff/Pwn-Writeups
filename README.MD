@@ -295,8 +295,6 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
   `process('./<bin>')` 复跑（`test_your_nc` / `rip` / `warmup_csaw_2016` / `ciscn_2019_n_1` 都在库）。
   **05** 的 EXP 自带 `LOCAL` 分支，可直接
   `python 05_get_started_3dsctf_2016_exp.py LOCAL` 验证 `get_flag` 分支。
-- **08** 是唯一附件未归档的题：`.gitignore` 只跟踪文档/脚本，当年没 `git add -f`。
-  文档已写明自备附件时的四项校验（`file` / `checksec` / `strings` 偏移 / `0x804c044`、`%10$n`）。
 - **19** 补了 `SSL=1`（TLS 平台）；**23** 补了 `make_local_exec.py` + i386 loader 的复跑命令。
 - 全局修正：文档里 i386 loader 原写作 `/tmp/libc32/root/usr/lib32`，本机实际是
   `/tmp/libc32/root/usr/lib/i386-linux-gnu`（`libc6:i386` deb）；已批量替换并补了
