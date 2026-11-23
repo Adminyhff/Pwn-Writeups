@@ -29,10 +29,12 @@ Pwn Writeups/
 │   ├── 05_get_started_3dsctf_2016_{speedrun,writeup,exp}.*
 │   ├── 06_jarvisoj_level0_{speedrun,exp}.*
 │   ├── 09_canary_{speedrun,exp}.*
+│   ├── 27_jarvisoj_http_{speedrun,exp}.*
 │   ├── rip
 │   ├── warmup_csaw_2016
 │   ├── get_started_3dsctf_2016
 │   ├── jarvisoj_level0
+│   ├── jarvisoj_http
 │   └── [NewStarCTF 公开赛赛道]canary/pwn
 ├── ret2libc/                          # 栈溢出 + leak libc + 返回到 system
 │   ├── README.md
@@ -45,7 +47,8 @@ Pwn Writeups/
 │   ├── 19_pwnable_silverbullet_{speedrun,exp}.*
 │   ├── 20_bbbaby_pwn1_{speedrun,exp}.*
 │   ├── 25_rec_33c3_2016_{speedrun,exp}.*
-│   └── 对应二进制 + libc.so.6 / libc-2.23.so / libc-2.24.so
+│   ├── 28_canary3_{speedrun,exp}.*
+│   └── 对应二进制 + libc.so.6 / libc-2.23.so / libc-2.24.so / canary3
 ├── ret2shellcode/                     # NX 关闭 + 栈上 shellcode
 │   ├── README.md
 │   ├── 21_pwnable_start_{speedrun,exp}.*
@@ -89,10 +92,14 @@ Pwn Writeups/
     ├── README.md
     ├── 15_babyheap_Octf_2017_{speedrun,exp}.*
     ├── 16_babyfengshui_33c3_2016_{speedrun,exp}.*
+    ├── 26_card_{speedrun,exp}.*
     ├── babyheap_Octf_2017
-    └── babyfengshui_33c3_2016
+    ├── babyfengshui_33c3_2016
+    └── card
 └── tools/                             # 仓库自检脚本（非题目）
-    └── repro_audit.py                 # 01–24 复现性静态审计（见 README 文末）
+    ├── repro_audit.py                 # 01–28 复现性静态审计（见 README 文末）
+    ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
+    └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
 
 ## Pattern Index
@@ -100,8 +107,8 @@ Pwn Writeups/
 | 模式目录 | 共同模式特征 | 包含题目 |
 | --- | --- | --- |
 | `network_interaction_free_shell` | 程序正常逻辑直接给 shell，无内存破坏点 | `01_test_your_nc`、`17_others_shellcode` |
-| `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门 | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary` |
-| `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")`（25 是“未初始化函数指针 + `esp` 泄漏栈喷”的变体，无栈溢出） | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1`、`25_rec_33c3_2016` |
+| `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门；27 是“服务端逐字节读请求 + CSU ROP”的变体（不需要后门函数） | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary`、`27_jarvisoj_http` |
+| `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")`（25 是“未初始化函数指针 + `esp` 泄漏栈喷”的变体，无栈溢出；28 靠登录 off-by-one + `printf("%s")` 泄 canary） | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1`、`25_rec_33c3_2016`、`28_canary3` |
 | `ret2shellcode` | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后执行栈/堆上 shellcode | `21_pwnable_start` |
 | `stack_pivot` | 溢出空间不足，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` 再执行长链 | `22_ropemporium_pivot` |
 | `sandbox_seccomp` | 程序装 seccomp BPF，`execve` 被拦，只能 `open`+`read`+`write` 读 flag | `23_pwnable_orw`、`24_easyroptocol` |
@@ -109,7 +116,7 @@ Pwn Writeups/
 | `format_string_write` | `printf(user_input)`，用 `%n` 改全局变量或 GOT | `08_fifth_space_2019_pwn5` |
 | `stack_local_var_overwrite` | 栈溢出改相邻局部变量，绕过条件判断 | `04_ciscn_2019_n_1` |
 | `heap_uaf` | free 后指针仍被引用，重新分配旧对象改写函数指针 | `14_hitcontraining_uaf` |
-| `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016` |
+| `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card` |
 
 逐题的判定依据、偏移、目标地址与关键坑点见 [PATTERN_CLASSIFICATION.md](PATTERN_CLASSIFICATION.md)。
 
@@ -134,6 +141,12 @@ python 03_warmup_csaw_2016_exp.py
 python 05_get_started_3dsctf_2016_exp.py LOCAL   # 本地验证，当前目录需有 flag.txt
 python 06_jarvisoj_level0_exp.py LOCAL
 python 09_canary_exp.py LOCAL
+
+# 27 是服务端逐字节读请求 + CSU ROP（No PIE）：TCP 127.0.0.1:3847
+python 27_jarvisoj_http_exp.py LOCAL
+# 本机 WSL2 loopback TCP 不可用时（由宿主网络栈引起）改用 AF_UNIX 兜底：
+#   gcc -shared -fPIC -O2 -o ../tools/loopback_unix_shim.so ../tools/loopback_unix_shim.c -ldl
+USE_UNIX=1 python 27_jarvisoj_http_exp.py LOCAL
 
 cd ../ret2libc
 python 07_newstarctf_2023_ret2libc_exp.py LOCAL
@@ -167,6 +180,10 @@ I386_LIBPATH=/tmp/libc224/root/lib/i386-linux-gnu \
 python 25_rec_33c3_2016_exp.py LOCAL
 LIBC=./libc-2.24.so HOST=target.example.com PORT=9999 \
 python 25_rec_33c3_2016_exp.py
+
+# 28 是 canary3：登录 off-by-one + printf("%s") 泄 canary，本机 libc 即可
+python 28_canary3_exp.py LOCAL
+LIBC=/path/to/libc.so.6 python 28_canary3_exp.py HOST PORT
 
 cd ../ret2shellcode
 # 21 是 32 位静态汇编，栈可执行，直接 ret2shellcode
@@ -203,6 +220,12 @@ I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
 python 16_babyfengshui_33c3_2016_exp.py LOCAL
 
+# 26 是 card：libc 2.27（附件 libc.so）+ 1 字节堆溢出 -> tcache 毒化 __free_hook
+LD_SO=/tmp/libc227/root/lib/x86_64-linux-gnu/ld-2.27.so \
+LIBC_DIR=/tmp/libc227/root/lib/x86_64-linux-gnu \
+LIBC=/tmp/libc227/root/lib/x86_64-linux-gnu/libc-2.27.so \
+python 26_card_exp.py LOCAL
+
 cd ../network_interaction_free_shell
 python 17_others_shellcode_exp.py LOCAL
 
@@ -216,7 +239,7 @@ python exp.py
 
 ---
 
-## 复现自检（01–24 + 25，2026-11-23）
+## 复现自检（01–28，2026-11-23）
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
@@ -228,7 +251,7 @@ python exp.py
 3. 脚本读取的每个环境变量（`I386_LD` / `I386_LIBPATH` / `LIBC` / `LD_SO` / `LIBC_DIR` / `SSL` / `HOST` / `PORT`）
    是否写进了对应的 `*_speedrun.md`；
 4. 文档是否含 ```` ```bash ```` 运行块、是否残留 `TODO` / `待补` / `???`；
-5. 标出“`HOST` 写死在脚本里”的题（2019 年 CTF² 临时靶机，早已下线）。
+5. 标出“`HOST` 写死在脚本里”的题（CTF² 临时靶机，早已下线）。
 
 ```bash
 cd '/home/yfhd5/Pwn Writeups' && source .venv/bin/activate
@@ -287,10 +310,14 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 | 23 | `23_pwnable_orw_exp.py` | ./orw, ./orw_local_exec | I386_LD, I386_LIBPATH | ✅ | 本次补复跑方法 |
 | 24 | `24_easyroptocol_exp.py` | —（用同目录 libc-2.31.so） | — | ✅ | 实跑通过 |
 | 25 | `25_rec_33c3_2016_exp.py` | ./rec_33c3_2016 | HOST, I386_LD, I386_LIBPATH, LIBC, PORT, SSL | ✅ | 另有 §8 从零清单 |
+| 26 | `26_card_exp.py` | ./card | HOST, LIBC, LIBC_DIR, LD_SO, PORT, SSL | ✅ | 实跑 3/3（libc 2.27） |
+| 27 | `27_jarvisoj_http_exp.py` | ./jarvisoj_http | HOST, PORT, USE_UNIX, SHIM, HTTP_UNIX, SHIM_LOG | ✅ | 实跑 3/3（`USE_UNIX=1`） |
+| 28 | `28_canary3_exp.py` | ./canary3 | LIBC（远程可选） | ✅ | 实跑 3/3 |
 
 审计结论（本次实际补齐的内容已写回各题文档）：
 
-- **25 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
+- **28 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
+- 新归档的 26 / 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）。
 - **01–04** 的 EXP 只有远程分支且 `HOST` 已下线：文档已加提示，本地按
   `process('./<bin>')` 复跑（`test_your_nc` / `rip` / `warmup_csaw_2016` / `ciscn_2019_n_1` 都在库）。
   **05** 的 EXP 自带 `LOCAL` 分支，可直接
@@ -303,3 +330,31 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
   分别为 `flag{LOCAL_SMOKE}`、`flag{smoke12}`、`flag{SILVER_LOCAL}`、
   `__PWNED__{pivot_local_ok}`、`__PWNED__{orw_local_ok}`、`__PWNED__{easyroptocol_local_ok}`。
 - 审计只证明“静态可复现”；逻辑是否仍成功以各题 `speedrun.md` 的实测输出为准。
+
+### 本地实跑矩阵（`tools/verify_all.sh`）
+
+静态审计证明“文件齐、能编译、文档写了怎么跑”，实跑矩阵进一步证明“按文档真能跑通”。
+每题跑一次 smoke test，成功与否用输出里的固定字符串判定：
+
+```bash
+cd '/home/yfhd5/Pwn Writeups' && source .venv/bin/activate
+bash tools/verify_all.sh              # 全部
+bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/verify_all/<题号>.log）
+```
+
+| 题 | 前置 | 判定字符串 | 2026-11-23 结果 |
+| --- | --- | --- | --- |
+| 05 | 目录内 `flag.txt`（脚本临时创建） | `GOT THE FLAG` | PASS |
+| 12 | 目录内 `flag.txt`（临时创建） | `GOT THE FLAG` | PASS |
+| 22 | 目录内 `flag.txt`（临时创建） | `__PWNED__` | PASS |
+| 23 | `orw_local_exec` + `flag.txt` | `flag{` | PASS |
+| 24 | — | `flag:` | PASS |
+| 26 | `/tmp/libc227` 的 2.27 loader + `card` | `shell ok` | PASS |
+| 27 | `jarvisoj_http` + `tools/loopback_unix_shim.so` | `getshell OK` | PASS |
+| 28 | `canary3` | `shell ok` | PASS |
+
+总计 **PASS=8 FAIL=0 SKIP=0**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
+
+> **`LD_PRELOAD` 与空格**：仓库路径 `Pwn Writeups` 含空格，`LD_PRELOAD` 会按空格切分多个库，
+> 所以 27 的兜底方案里 `SHIM` 必须给**不含空格的相对路径**（默认 `../tools/loopback_unix_shim.so`）
+> 或先 `cp` 到 `/tmp` 再引用，否则 shim 静默不生效（表现为“连不上 `HTTP_UNIX` 的 socket”）。

@@ -36,6 +36,7 @@
 | `05_get_started_3dsctf_2016` | i386 / **静态** / not stripped | `gets(buf)`，`buf=esp+4` | **56** | `get_flag = 0x080489a0` | 隐藏后门要求两个 magic 参数；返回地址接 `exit` 刷新 stdio |
 | `06_jarvisoj_level0` | amd64 / 动态 / not stripped | `read(0, buf, 0x200)`，`buf=rbp-0x80` | **136** | `callsystem+1 = 0x400597` | `callsystem` 内 `system("/bin/sh")`；跳 `0x400596` 会 `push rbp` 破坏栈对齐 |
 | `09_canary` | amd64 / 动态 / PIE | 三次 `read`，`buf=rbp-0x30`；canary `%11$p` | **56**（canary 40） | `system@plt`（PIE） | 格式化字符串 leak canary/PIE，`%256c%9$n` 把 `money` 改成 256，再 canary-safe ROP |
+| `27_jarvisoj_http` | amd64 / 动态 / No PIE / No canary | 服务端逐字节 `read(fd,&c,1)` 直到 `\r\n\r\n`，`buf=rbp-0x210` | saved RIP 在字节流 **0x216** | `__libc_csu_init` 链：`read`→`popen`→`waitpid` | 栈溢出在 httpd 请求读取里；计数器 `cnt` 位于 `buf+0x20C`，需要先绕过回卷 |
 
 ### 共同点与差异
 
@@ -46,6 +47,11 @@
 - 都通过覆盖返回地址进入二进制内已有代码，而不是执行栈上 shellcode。
 
 `09_canary` 是本模式的 PIE + Canary 变体：先 leak canary / PIE，再用格式化字符串把全局 `money` 改成 256，最后做 canary-safe ROP；它仍然跳到二进制内的 `system@plt`，所以归入 ret2text。
+
+`27_jarvisoj_http` 是本模式的“无后门”变体：栈溢出发生在服务端读请求的函数里，
+二进制里没有现成的 `system("/bin/sh")`，但 `No PIE + 无 canary` 让它可以直接用
+`__libc_csu_init` 的 `call qword ptr [r12+rbx*8]` 依次调 `read` / `popen` / `waitpid`，
+等价于“返回到二进制内已有代码 + 自己拼调用”，因此同样归入 ret2text。
 
 差异：
 
@@ -68,6 +74,7 @@
 | `05_get_started_3dsctf_2016` | `05_get_started_3dsctf_2016_speedrun.md` | `05_get_started_3dsctf_2016_writeup.md` | `05_get_started_3dsctf_2016_exp.py` | `get_started_3dsctf_2016` |
 | `06_jarvisoj_level0` | `06_jarvisoj_level0_speedrun.md` | 无（speedrun 已含完整逆向） | `06_jarvisoj_level0_exp.py` | `jarvisoj_level0` |
 | `09_canary` | `09_canary_speedrun.md` | 无（speedrun 已含完整逆向） | `09_canary_exp.py` | `[NewStarCTF 公开赛赛道]canary/pwn` |
+| `27_jarvisoj_http` | `27_jarvisoj_http_speedrun.md` | 无（speedrun 已含完整逆向） | `27_jarvisoj_http_exp.py` | `jarvisoj_http`（+ `../tools/loopback_unix_shim.c`） |
 
 ---
 
@@ -93,6 +100,16 @@ HOST=target.example.com PORT=9999 python 06_jarvisoj_level0_exp.py
 # 09：PIE + canary + format string；本地直接跑
 python 09_canary_exp.py LOCAL
 HOST=target.example.com PORT=9999 python 09_canary_exp.py
+
+# 27：httpd 自身监听 127.0.0.1:3847，EXP 起进程后连回环
+python 27_jarvisoj_http_exp.py LOCAL
+HOST=target.example.com PORT=3847 python 27_jarvisoj_http_exp.py
+# WSL2 loopback TCP 不可用时（宿主网络栈问题）：
+gcc -shared -fPIC -O2 -o ../tools/loopback_unix_shim.so ../tools/loopback_unix_shim.c -ldl
+USE_UNIX=1 python 27_jarvisoj_http_exp.py LOCAL   # LD_PRELOAD 改 AF_UNIX，fd 编号不变
+
+# 一键本地矩阵（05 / 27）
+bash ../tools/verify_all.sh 05 27
 ```
 
 > EXP 中硬编码的远程地址会随靶机变化，运行前替换 `HOST`。
@@ -107,6 +124,8 @@ gets / read + 可覆盖 RIP
 + 通常 No PIE + No Canary
 = ret2text
 （09 例外：有 canary/PIE，先 leak 再 ROP）
+（27 例外：没有后门函数，用 __libc_csu_init gadget 自己拼 read/popen 调用）
 ```
 
-一句话：**先找后门，再算偏移；64 位记得跳 `push rbp` 的下一条指令。**
+一句话：**先找后门，再算偏移；64 位记得跳 `push rbp` 的下一条指令；
+没有后门时，No PIE 的 CSU 链就是“通用后门”。**

