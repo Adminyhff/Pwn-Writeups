@@ -165,7 +165,19 @@ p.sendlineafter(b"your choice", b"/bin/sh")
 | `bbbaby_pwn1` / `libc-2.23.so` | 20 的题目二进制（stripped，64 位）与附件 libc |
 | `rec_33c3_2016` / `libc-2.24.so` | 25 的题目二进制（stripped，32 位 PIE）与本地复现用 i386 libc 2.24-3ubuntu2.2 |
 
-> 这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
+> **25 的两个附件不在 git 跟踪内**（仓库约定只提交 `.md` / `.py`）。
+> 从零复现时按下面的来源取回并校验：
+>
+> - `rec_33c3_2016`：
+>   `https://raw.githubusercontent.com/ctfs/write-ups-2016/master/33c3-ctf/pwn/rec-200/rec`
+>   → sha256 `cc549fbc6045151381eae842b8f4b7a3130c1bcf0e22d5f2093ad92008ebed49`（9564 B）
+> - `libc-2.24.so`：old-releases `libc6_2.24-3ubuntu2.2_i386.deb` 解包出
+>   `lib/i386-linux-gnu/libc.so.6` → md5 `79f8c0d940ae393b3ad1be40892c9c84`；
+>   loader 用同包 `lib/ld-linux.so.2`，通过 `I386_LD` / `I386_LIBPATH` 指定。
+>
+> 可直接照抄的命令、校验值与预期输出见 `25_rec_33c3_2016_speedrun.md` §8。
+
+这些题目都没有单独留 `writeup.md`；对应的 `speedrun.md` 已包含完整逆向、栈布局、gadget 与两阶段利用说明。
 
 ---
 
