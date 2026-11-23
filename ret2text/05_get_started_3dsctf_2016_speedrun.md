@@ -4,6 +4,17 @@
 > 目标：跳到未被调用的 `get_flag(int, int)`，打印 `flag.txt`  
 > 关键：偏移 **56**；参数 **0x308cd64f**、**0x195719d1**；返回接 **exit**
 
+> ⚠️ **复现提示（2026-11-23 审计）**：EXP 的远程 `HOST` 是 2019 年 CTF²
+> 的临时靶机（已下线），但脚本**带 `LOCAL` 分支**。本地复现：
+>
+> ```bash
+> cd '/home/yfhd5/Pwn Writeups/ret2text'
+> echo 'flag{LOCAL}' > flag.txt
+> python 05_get_started_3dsctf_2016_exp.py LOCAL
+> ```
+>
+> 二进制 `get_started_3dsctf_2016` 已归档在同目录。
+
 ---
 
 ## 0. 一句话结论

@@ -369,8 +369,8 @@ if __name__ == "__main__":
 
 ```bash
 cd '/home/yfhd5/Pwn Writeups/heap_uaf'
-I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
-I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 ../.venv/bin/python 14_hitcontraining_uaf_exp.py LOCAL
 ```
 

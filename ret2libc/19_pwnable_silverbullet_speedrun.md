@@ -241,8 +241,8 @@ def fire(p, payload):
 cd '/home/yfhd5/Pwn Writeups/ret2libc'
 
 echo 'flag{SILVER_LOCAL}' > flag.txt
-I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
-I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 python 19_pwnable_silverbullet_exp.py LOCAL
 rm -f flag.txt
 ```
@@ -267,6 +267,10 @@ flag{SILVER_LOCAL}
 
 ```bash
 LIBC=./libc.so.6 HOST=target.example.com PORT=9999 \
+python 19_pwnable_silverbullet_exp.py
+
+# TLS 平台（CTF² 等）额外加 SSL=1
+SSL=1 LIBC=./libc.so.6 HOST=target.example.com PORT=9999 \
 python 19_pwnable_silverbullet_exp.py
 ```
 

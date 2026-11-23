@@ -202,11 +202,11 @@ LIBC=./libc-2.27.so HOST=target.example.com PORT=9999 \
 python 07_newstarctf_2023_ret2libc_exp.py
 
 # 10 / 11：32 位，需要 i386 loader
-I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
-I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 python 10_jarvisoj_level4_exp.py LOCAL
-I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
-I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 python 11_2018_rop_exp.py LOCAL
 
 # 12：本机 glibc
@@ -223,8 +223,8 @@ LIBC=./libc-2.27.so HOST=target.example.com PORT=9999 \
 python 18_repeater_exp.py
 
 # 19：逻辑 bug 越界 + ret2libc（32 位，需要 i386 loader）
-I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
-I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 python 19_pwnable_silverbullet_exp.py LOCAL
 
 # 20：任意写 + canary 绕过 + ret2libc

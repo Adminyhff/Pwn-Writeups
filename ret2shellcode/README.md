@@ -58,7 +58,7 @@ python 21_pwnable_start_exp.py REMOTE     # 远程 chall.pwnable.tw:10000
 ```
 
 > 32 位静态程序在本机可直接执行，不需要 i386 loader；但如果换成动态链接的 32 位题，
-> 仍按仓库惯例加 `I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2`。
+> 仍按仓库惯例加 `I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2`。
 
 ---
 

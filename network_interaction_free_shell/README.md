@@ -67,8 +67,8 @@ objdump -d -M intel test_your_nc | sed -n '/<main>:/,/^$/p'
 python 01_test_your_nc_exp.py
 
 # 17：本地验证 execve shellcode
-I386_LD=/tmp/libc32/root/usr/lib32/ld-linux.so.2 \
-I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 python 17_others_shellcode_exp.py LOCAL
 ```
 

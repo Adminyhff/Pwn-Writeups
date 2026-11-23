@@ -108,6 +108,30 @@ int 0x80                    ; write(1, buf, 0x100)
 __PWNED__{orw_local_ok}
 ```
 
+### 3.1 复跑方法（2026-11-23 审计补）
+
+```bash
+cd '/home/yfhd5/Pwn Writeups/sandbox_seccomp'
+python make_local_exec.py          # 一次性：生成 RWE 补丁版 orw_local_exec（已生成可跳过）
+
+# 本地（不带参数，自动优先用 ./orw_local_exec）
+I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
+python 23_pwnable_orw_exp.py
+
+# 远程（pwnable.tw 原题）
+python 23_pwnable_orw_exp.py REMOTE
+```
+
+- 默认值指向本机 `/tmp/libc32`（`libc6:i386` deb 解包，`libc.so.6` md5 `7fde74420b72b39b43abdce782ade03c`）。
+  **换机器先确认路径**：`find /tmp -name ld-linux.so.2` —— `libc6:i386` 在
+  `usr/lib/i386-linux-gnu/`，`libc6-i386` 在 `usr/lib32/`，两者不能混用。
+- 本地要看到 flag，必须在**当前目录**放 `flag.txt`：shellcode 写死 `open("flag.txt")`。
+- `orw` 是原版（给远程），`orw_local_exec` 只改了一个 `PT_LOAD` 的 `p_flags`；
+  两个文件都要留在目录里，脚本按“存在即用”选择。
+- 若报 `FileNotFoundError: './orw_local_exec'`，真实原因是**缺 32 位 loader**
+  （ELF 的 interp 不存在），不是文件没生成；补 `I386_LD` 或装 `libc6-i386` 即可。
+
 ---
 
 ## 4. 坑点清单

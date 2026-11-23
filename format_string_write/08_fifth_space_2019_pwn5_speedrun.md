@@ -309,6 +309,17 @@ if __name__ == "__main__":
 
 ### 本地验证（需要 i386 loader）
 
+> ⚠️ **附件未归档（2026-11-23 审计）**：本仓库没有 `[第五空间2019决赛]PWN5`。
+> `.gitignore` 只跟踪文档/脚本，这个二进制当年没有 `git add -f`，所以 clone 下来后
+> 下面的 `LOCAL` 会直接报 `No such file`。使用前请自备同名附件，并先跑 §1 的三条命令核对：
+>
+> - `file` → `ELF 32-bit LSB executable, Intel i386, dynamically linked, stripped`
+> - `checksec` → Partial RELRO / Canary / NX / **No PIE (0x8048000)**
+> - `strings -tx` 看到 `2008 /dev/urandom`、`2015 your name:`、`2027 your passwd:`、`2039 ok!!`
+> - 全局随机密码在 `0x804c044`，name 在 `ebp-0x70`、pass 在 `ebp-0x80`，格式化参数是第 **10** 个
+>
+> 四项都对得上才说明是同一 build；否则 `%10$n` 与 `0x804c044` 都要重新算。
+
 如果系统已经装了 `libc6-i386`：
 
 ```bash
