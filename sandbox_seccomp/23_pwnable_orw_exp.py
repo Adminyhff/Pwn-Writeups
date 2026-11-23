@@ -63,8 +63,10 @@ def start() -> tube:
     if len(sys.argv) > 1 and sys.argv[1].upper() == "REMOTE":
         return remote(HOST, PORT)
     # 本机没有 32 位 loader，默认用 /tmp/libc32 里的 i386 ld-linux.so.2
-    ld = os.getenv("I386_LD", "/tmp/libc32/root/usr/lib32/ld-linux.so.2")
-    libpath = os.getenv("I386_LIBPATH", "/tmp/libc32/root/usr/lib32")
+    # 注意：路径随 deb 不同（libc6:i386 -> usr/lib/i386-linux-gnu；
+    # libc6-i386 -> usr/lib32），换机器请先 `find /tmp -name ld-linux.so.2`
+    ld = os.getenv("I386_LD", "/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2")
+    libpath = os.getenv("I386_LIBPATH", "/tmp/libc32/root/usr/lib/i386-linux-gnu")
     # 本地必须用"段可执行"补丁版（见 make_local_exec.py），原版 orw 保留给远程
     binpath = LOCAL_BIN if os.path.exists(LOCAL_BIN) else BIN
     if os.path.exists(ld):

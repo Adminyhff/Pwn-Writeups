@@ -59,7 +59,12 @@ def start():
 def resolve_libc():
     path = LIBC_PATH
     if not path and args.LOCAL:
-        libpath = os.getenv("I386_LIBPATH", "/usr/lib32")
+        libpath = os.getenv("I386_LIBPATH")
+        if not libpath:
+            # 32 位 libc 位置随 deb 不同：libc6:i386 -> usr/lib/i386-linux-gnu，
+            # libc6-i386 -> usr/lib32；优先取 I386_LD 同目录
+            ld = os.getenv("I386_LD", "")
+            libpath = os.path.dirname(ld) if ld else "/usr/lib32"
         path = os.path.join(libpath, "libc.so.6")
     if not path:
         raise SystemExit("[-] set LIBC=/path/to/libc.so.6 for the remote target")
