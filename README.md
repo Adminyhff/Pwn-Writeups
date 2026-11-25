@@ -61,6 +61,10 @@ Pwn_Writeups/
 ├── ret2csu/                           # 缺 pop rdx -> __libc_csu_init 通用 gadget
 │   ├── README.md
 │   ├── 30_ropemporium_ret2csu_{speedrun,exp}.*
+│   ├── 33_ropemporium_callme_{speedrun,exp}.*
+│   ├── callme_lab/                    # 33 的运行目录（encrypted_flag.dat 与 30 同名冲突）
+│   │   ├── callme / libcallme.so
+│   │   └── key1.dat / key2.dat / encrypted_flag.dat
 │   ├── ret2csu
 │   ├── libret2csu.so
 │   ├── key.dat
@@ -71,11 +75,14 @@ Pwn_Writeups/
 │   ├── write4
 │   ├── libwrite4.so
 │   └── flag.txt
-├── badchars_encoding/                 # 坏字符过滤 -> 写密文 + 原地解码
+├── badchars_encoding/                 # 坏字符过滤 / 无写原语 -> 编码 + 位运算构造
 │   ├── README.md
 │   ├── 32_ropemporium_badchars_{speedrun,exp}.*
+│   ├── 34_ropemporium_fluff_{speedrun,exp}.*
 │   ├── badchars
 │   ├── libbadchars.so
+│   ├── fluff                         # 34：无 mov [reg],reg，靠 bextr+xlatb+stosb
+│   ├── libfluff.so
 │   └── flag.txt
 ├── sandbox_seccomp/                   # seccomp 沙箱 -> ORW
 │   ├── README.md
@@ -151,7 +158,7 @@ Pwn_Writeups/
 │   ├── 29_pwnable_tw_seethefile_{speedrun,exp}.*
 │   └── seethefile
 └── tools/                             # 仓库自检脚本（非题目）
-    ├── repro_audit.py                 # 01–32 + L1–L6 复现性静态审计（见 README 文末）
+    ├── repro_audit.py                 # 01–34 + L1–L6 复现性静态审计（见 README 文末）
     ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
     └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
@@ -163,7 +170,7 @@ Pwn_Writeups/
 | `network_interaction_free_shell` | 程序正常逻辑直接给 shell，无内存破坏点 | `01_test_your_nc`、`17_others_shellcode` |
 | `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门；27 是“服务端逐字节读请求 + CSU ROP”的变体（不需要后门函数） | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary`、`27_jarvisoj_http` |
 | `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")`（25 是“未初始化函数指针 + `esp` 泄漏栈喷”的变体，无栈溢出；28 靠登录 off-by-one + `printf("%s")` 泄 canary） | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1`、`25_rec_33c3_2016`、`28_canary3` |
-| `ret2csu` | 缺 `pop rdx`（或 `pop rsi`）时用 `__libc_csu_init` 的 `pop rbx/rbp/r12/r13/r14/r15; ret` + `call [r12+rbx*8]` 补参数；第一参要完整 64 位时 csu 只设 rdx，再用 pop 补前两参 | `30_ropemporium_ret2csu` |
+| `ret2csu` | 缺 `pop rdx`（或 `pop rsi`）时用 `__libc_csu_init` 的 `pop rbx/rbp/r12/r13/r14/r15; ret` + `call [r12+rbx*8]` 补参数；第一参要完整 64 位时 csu 只设 rdx，再用 pop 补前两参；33 是同族但更优的变体：有合并 gadget `pop rdi; pop rsi; pop rdx`，不需要 csu | `30_ropemporium_ret2csu`、`33_ropemporium_callme` |
 | `ret2syscall` | 静态/无 libc，用 `pop eax/ebx/ecx/edx` + `int 0x80` 自己拼 `execve` | `L2_lab_ret2syscall_i386`（自造） |
 | `ret2dlresolve` | 动态链接但没有 `system`，伪造 `Elf32_Rel`/`Elf32_Sym`/符号名 + 调 `plt0` 让链接器解析 | `L3_lab_ret2dlresolve_i386`（自造） |
 | `ret2shellcode` | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后执行栈/堆上 shellcode | `21_pwnable_start` |
@@ -178,7 +185,7 @@ Pwn_Writeups/
 | `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card` |
 | `fsop` | 可控 `FILE *` / `_IO_list_all` → 伪造 `_IO_FILE` + vtable | `29_pwnable_tw_seethefile` |
 | `rop_write_memory` | 目标函数要一个**内存里不存在**的字符串，用 `mov [reg_a], reg_b; ret` 写进 `.data`/`.bss`，再 `pop rdi` 传地址 | `31_ropemporium_write4` |
-| `badchars_encoding` | 输入被逐字节过滤（坏字符 `x g a .`，命中改 `0xeb`），先写密文再用 `xor byte ptr [r15], r14b` 原地解码 | `32_ropemporium_badchars` |
+| `badchars_encoding` | 输入被逐字节过滤（坏字符 `x g a .`，命中改 `0xeb`），先写密文再用 `xor byte ptr [r15], r14b` 原地解码；34 是同一族的另一面：没有写内存原语，用 `bextr` 算地址 + `xlatb` 取字符 + `stosb` 落盘 | `32_ropemporium_badchars`、`34_ropemporium_fluff` |
 
 逐题的判定依据、偏移、目标地址与关键坑点见 [PATTERN_CLASSIFICATION.md](PATTERN_CLASSIFICATION.md)。
 
@@ -258,6 +265,8 @@ python 22_ropemporium_pivot_exp.py        # 当前目录需有 flag.txt
 cd ../ret2csu
 # 30 是 ROP Emporium ret2csu：缺 pop rdx，用 __libc_csu_init + frame_dummy 保 rdx
 python 30_ropemporium_ret2csu_exp.py LOCAL   # 目录内需有 libret2csu.so / key.dat / encrypted_flag.dat
+# 33 callme：pop rdi;pop rsi;pop rdx 一次装三参，按 one->two->three 调用
+python 33_ropemporium_callme_exp.py LOCAL    # 运行文件在 callme_lab/（EXP 自动切 cwd）
 
 cd ../rop_write_memory
 # 31 用 mov [r14],r15 把 "flag.txt" 写进 .data，再 print_file(字符串地址)
@@ -266,6 +275,8 @@ python 31_ropemporium_write4_exp.py LOCAL    # 目录内需有 libwrite4.so / fl
 cd ../badchars_encoding
 # 32 坏字符 x/g/a/. -> "flag.txt"^2 = "dnce,vzv"，写完再 xor 解码
 python 32_ropemporium_badchars_exp.py LOCAL  # 目录内需有 libbadchars.so / flag.txt
+# 34 fluff：无写内存原语 -> bextr 算 rbx + xlatb 取字符 + stosb 写 0x601040
+python 34_ropemporium_fluff_exp.py LOCAL     # 目录内需有 libfluff.so / flag.txt；换 glibc 要重测 AL0
 
 cd ../sandbox_seccomp
 # 23 是 seccomp ORW；现代内核需要先给 .bss 段加 PF_X
@@ -349,12 +360,12 @@ python exp.py
 
 ---
 
-## 复现自检（01–32 + L1–L6，2026-11-25）
+## 复现自检（01–34 + L1–L6，2026-11-25）
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
 
-它覆盖 `*/*_exp.py`（题号 01–32）与 `labs/*/exp.py`（L1–L6；EXP 名统一是 `exp.py`，
+它覆盖 `*/*_exp.py`（题号 01–34）与 `labs/*/exp.py`（L1–L6；EXP 名统一是 `exp.py`，
 文档用同目录 `README.md`），检查五项，全部是“缺了就跑不起来”的硬条件：
 
 1. `*_exp.py` / `labs/*/exp.py` 能否 `compile()` 通过（不落 `__pycache__`）；
@@ -372,7 +383,7 @@ python tools/repro_audit.py 08 19    # 只审指定题号
 python tools/repro_audit.py 6        # 只审 lab L6（也接受 `L6` 写法）
 ```
 
-当前结果：**38 题（32 个编号题 + 6 个 lab），文档缺口 0**。
+当前结果：**40 题（34 个编号题 + 6 个 lab），文档缺口 0**。
 
 ### 32 位题的公共前置（i386 loader）
 

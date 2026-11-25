@@ -28,7 +28,18 @@
 `rbx=0 / rbp=1` 让循环只跑一轮；`csu_call` 之后要再垫 **7 个 qword** 才轮到返回地址
 （1 个 `add rsp,8` + 6 个 pop）。
 
-## 2. 本题（ROP Emporium `ret2csu`）与标准型的差异
+## 2. 本模式题目
+
+| 题目 | 架构 / 保护 | 缺口 | 解法 |
+| --- | --- | --- | --- |
+| `30_ropemporium_ret2csu` | amd64 / No PIE / NX / Partial RELRO | 没有 `pop rdx` | csu 两段式 + 无害跳板（见 §3） |
+| `33_ropemporium_callme` | 同上 | 寄存器不缺，但每个函数都要重装 3 个参数 | 合并 gadget `pop rdi; pop rsi; pop rdx; ret`（0x40093c），不走 csu |
+
+> 33 归到这个目录是因为**识别特征相同**（连续调用多个同签名三参函数）；
+> 但它的最优解不是 csu——先找"一条 gadget 装多个参数"，找不到才退回 csu。
+> 细节见 `33_ropemporium_callme_speedrun.md`。
+
+## 3. 30 `ret2csu` 与标准型的差异
 
 | 项 | 值 |
 | --- | --- |
@@ -46,7 +57,7 @@ frame_dummy -> register_tm_clones   全程只用 rax/rsi/rdi/rbp，不写 rdx
             末尾 pop rbp ; ret     正好回到 0x40068d 继续 csu 收尾
 ```
 
-## 3. 通用坑点
+## 4. 通用坑点
 
 1. **`call [r12+rbx*8]` 是内存间接调用**：`r12` 必须是"指针的地址"。直接放
    `xxx@plt` 会把 PLT 的指令字节当地址 → 崩。
@@ -58,26 +69,32 @@ frame_dummy -> register_tm_clones   全程只用 rax/rsi/rdi/rbp，不写 rdx
 4. **GOT 懒绑定**：`ret` 到 `ret2win@plt` 时 GOT 可能还没解析，PLT 会自己触发
    `_dl_runtime_resolve`，参数不受影响。
 
-## 4. 运行方式
+## 5. 运行方式
 
 ```bash
 cd '/home/yfhd5/Pwn_Writeups/ret2csu'
 source ../.venv/bin/activate
 python 30_ropemporium_ret2csu_exp.py LOCAL     # 需要 libret2csu.so / key.dat 在同目录
+python 33_ropemporium_callme_exp.py LOCAL      # 运行文件在 callme_lab/，EXP 自动切 cwd
 ```
 
-`ret2csu` 的 `RUNPATH` 是 `b'.'`，所以 EXP 里先 `chdir` 到脚本目录，保证
-`libret2csu.so`、`key.dat`、`encrypted_flag.dat` 都能被找到。
+`ret2csu`/`callme` 的 `RUNPATH` 都是 `b'.'`（相对 cwd），所以 EXP 里先 `chdir` 到
+附件所在目录。**两题的 `encrypted_flag.dat` 同名不同内容**（`37aa4baf…` vs `3160bfe6…`），
+不能放同一目录，否则后拷的会覆盖前者、30 会解不出 flag——所以 callme 的 5 个文件
+单独放在 `ret2csu/callme_lab/`。
 
 > **附件复原**：原始的 `ret2csu.zip` 四件套已补档到 `_vendor/ret2csu/`，需要时：
 > `cp ../_vendor/ret2csu/{key.dat,encrypted_flag.dat} .`
 
-## 5. 识别卡
+## 6. 识别卡
 
 ```text
 看到"没有 pop rdx / pop rsi" + 有 __libc_csu_init 的长 pop 序列
   → ret2csu
+看到"要连续调用多个三参函数"（寄存器够用但每个函数都要重装参数）
+  → 先找合并 gadget（pop rdi; pop rsi; pop rdx），找不到才退回 ret2csu
 第一参必须是 64 位常量？
   → 是：csu 只设 rdx（call 指向不碰 rdx 的无害函数）+ pop rdi/rsi 补前两参
   → 否：标准 [csu_pop + csu_call] 两段式，call 后垫 7 个 qword
+参数宽度以 lib 里 cmp 的立即数为准，别照抄老 writeup（新版常改成 64 位双写）
 ```

@@ -60,10 +60,13 @@
   `Failed to open encrypted_flag.dat`。把它们从 zip 复原后 `cmp` 确认 `ret2csu` 与仓库内二进制完全一致（sha256 `8891368e…`），`libret2csu.so` 也一致（`c8916f77…`）。
   以后再丢就从这里 `cp` 回去：
   `cp _vendor/ret2csu/{key.dat,encrypted_flag.dat} ret2csu/`。
-- **`_vendor/ropemporium/`（2026-11-25 新增）**：ROP Emporium 的 `write4.zip` /
-  `badchars.zip` 原始压缩包（`https://ropemporium.com/binary/<name>.zip`，下载时均为 HTTP 200）。
-  两个 zip 各含 3 个文件：主程序、`lib<solver>.so`、`flag.txt`（33 字节，
-  内容 `ROPE{a_placeholder_32byte_flag!}` + `\n`，两题完全相同）。
+- **`_vendor/ropemporium/`（2026-11-25 新增，同日晚补 `callme` / `fluff`）**：
+  ROP Emporium 的 `write4.zip` / `badchars.zip` / `callme.zip` / `fluff.zip` 原始压缩包
+  （`https://ropemporium.com/binary/<name>.zip`，下载时均为 HTTP 200）。
+  `write4` / `badchars` / `fluff` 各含 3 个文件：主程序、`lib<solver>.so`、`flag.txt`
+  （33 字节，内容 `ROPE{a_placeholder_32byte_flag!}` + `\n`，三份完全相同）；
+  `callme` 含 5 个文件：主程序、`libcallme.so`、`key1.dat`、`key2.dat`、`encrypted_flag.dat`
+  （**没有明文 flag.txt**，flag 由 `callme_three` 用两个 key 解密后打印）。
   注意 `python -c "zipfile.ZipFile(...).extractall()"` **不保留可执行位**，
   解出后必须 `chmod +x`，否则 `process('./write4')` 报
   `not marked as executable (+x)`。
@@ -77,8 +80,23 @@
   | `badchars_encoding/badchars`（解出） | `5308289f3937a34e4c5eac818e394217f5f22c6f21fbb0f6dc6b8e3f771deb8b` |
   | `badchars_encoding/libbadchars.so` | `8765298372d1752663010530db5d6c744e746c0a0cf7d978abb28ab0a3b28f78` |
   | 两个目录的 `flag.txt`（同一份） | `04ccfeba117d050cc8d4d86db473d042295896cd808e54d7c12833d6327f104f` |
+  | `_vendor/ropemporium/callme.zip` | `a32deecd2f018bca0d2cce7e4ece2f60c08e3915e97f30f4d30e8d61ebf20741` |
+  | `_vendor/ropemporium/fluff.zip` | `a2d3ab1dbc201d5064845ae3ca1230b2da9f75aabd5f83bf46b92918a2769a76` |
+  | `ret2csu/callme_lab/callme`（解出） | `38b3aac5f11e673ecfbe344f9330d7dfa7d6921be506a948ab9d0347af756acb` |
+  | `ret2csu/callme_lab/libcallme.so` | `3163a8e07f0a199e3b64eb7da43830b97ece4476d051f265adeacdd1a35913f3` |
+  | `ret2csu/callme_lab/key1.dat` | `5dfbabeedf318bf33c0927c43d7630f51b82f351740301354fa3d7fc51f0132e` |
+  | `ret2csu/callme_lab/key2.dat` | `72055d73b96127ded060a77d59fcf8740ced6dbdddbe9e102836a8092e837589` |
+  | `ret2csu/callme_lab/encrypted_flag.dat` | `3160bfe63155c8f9f0d8ff0e508dda005c94bf2e5b76c2f872b87e322f07739b` |
+  | `badchars_encoding/fluff`（解出） | `e5335795104d861dc5e54c8734e090f1c7dfd5b642e4607c2747aed7529c724d` |
+  | `badchars_encoding/libfluff.so` | `09fbb5844522ee3f38a929245e4744eabed52f988c54e6b53ed26540ab3bfa55` |
 
-  两题都是 No PIE + `RUNPATH=b'.'`：EXP 里先 `chdir` 到脚本目录，否则 loader 找不到
-  `libwrite4.so` / `libbadchars.so`；`print_file` 也从 cwd 打开 `flag.txt`。
+  四题都是 No PIE + `RUNPATH=b'.'`：EXP 里先 `chdir` 到脚本目录，否则 loader 找不到
+  `libwrite4.so` / `libbadchars.so` / `libcallme.so` / `libfluff.so`；
+  `print_file` 也从 cwd 打开 `flag.txt`，`callme` 则从 cwd 读三个 `.dat`。
   归档副本：`rop_write_memory/{write4,libwrite4.so,flag.txt}`、
-  `badchars_encoding/{badchars,libbadchars.so,flag.txt}`（ELF 为 deny-all 白名单外，需 `git add -f`）。
+  `badchars_encoding/{badchars,libbadchars.so,flag.txt,fluff,libfluff.so}`、
+  `ret2csu/callme_lab/{callme,libcallme.so,key1.dat,key2.dat,encrypted_flag.dat}`
+  （ELF 为 deny-all 白名单外，需 `git add -f`）。
+  注意 `ret2csu/encrypted_flag.dat`（30 用，`37aa4baf…`）与
+  `ret2csu/callme_lab/encrypted_flag.dat`（33 用，`3160bfe6…`）**同名不同内容**，
+  不能互换，也不要合成一份。

