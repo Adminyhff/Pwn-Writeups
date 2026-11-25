@@ -493,7 +493,7 @@ flowchart TD
 ### 7.1 激活项目虚拟环境
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 source .venv/bin/activate
 cd ret2text
 
@@ -514,9 +514,9 @@ python 05_get_started_3dsctf_2016_exp.py LOCAL    # 本地复现，需要当前�
 
 ```bash
 mkdir -p /tmp/gs_exp && cd /tmp/gs_exp
-cp '/home/yfhd5/Pwn Writeups/ret2text/'{get_started_3dsctf_2016,05_get_started_3dsctf_2016_exp.py} .
+cp '/home/yfhd5/Pwn_Writeups/ret2text/'{get_started_3dsctf_2016,05_get_started_3dsctf_2016_exp.py} .
 printf 'flag{local_validation_0k}\n' > flag.txt
-'/home/yfhd5/Pwn Writeups/.venv/bin/python' 05_get_started_3dsctf_2016_exp.py LOCAL
+'/home/yfhd5/Pwn_Writeups/.venv/bin/python' 05_get_started_3dsctf_2016_exp.py LOCAL
 ```
 
 实际输出：

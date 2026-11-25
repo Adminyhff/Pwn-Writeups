@@ -1650,7 +1650,7 @@ handler      @0x40116c：
 复现：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 source .venv/bin/activate
 bash tools/verify_all.sh 31 32     # 期望 PASS=2 FAIL=0 SKIP=0
 ```

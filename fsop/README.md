@@ -59,7 +59,7 @@ loader 不入库，按下面命令解包 `libc6_2.24-3ubuntu2.2_i386.deb` 得到
 ## 4. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/fsop'
+cd '/home/yfhd5/Pwn_Writeups/fsop'
 source ../.venv/bin/activate
 
 # 本地：I386_LD / I386_LIBPATH 指向 i386 loader 目录，LIBC 指向 2.24 附件

@@ -31,7 +31,7 @@ BPF（12 条，.rodata 0x8048640）实测放行：
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/sandbox_seccomp'
+cd '/home/yfhd5/Pwn_Writeups/sandbox_seccomp'
 file orw
 readelf -hW orw | grep Type        # EXEC -> No PIE
 readelf -lW orw | grep -E 'LOAD|STACK'
@@ -111,7 +111,7 @@ __PWNED__{orw_local_ok}
 ### 3.1 复跑方法（2026-11-23 审计补）
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/sandbox_seccomp'
+cd '/home/yfhd5/Pwn_Writeups/sandbox_seccomp'
 python make_local_exec.py          # 一次性：生成 RWE 补丁版 orw_local_exec（已生成可跳过）
 
 # 本地（不带参数，自动优先用 ./orw_local_exec）

@@ -82,7 +82,7 @@ if (l->l_info[VERSYMIDX (DT_VERSYM)] != NULL) {
 ## 5. 复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/labs/lab_ret2dlresolve_i386'
+cd '/home/yfhd5/Pwn_Writeups/labs/lab_ret2dlresolve_i386'
 source ../../.venv/bin/activate
 make            # as --32 + ld -m elf_i386，链到 libc/libc.so.6（2.24 i386）
 python exp.py   # 期望 __PWNED__ + uid=...

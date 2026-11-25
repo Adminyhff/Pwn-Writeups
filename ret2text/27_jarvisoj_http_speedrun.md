@@ -38,7 +38,7 @@ read_request @0x40125d:
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 
 file jarvisoj_http
 checksec --file=jarvisoj_http
@@ -199,7 +199,7 @@ RSTR(0x601e80) = "r\0"                 popen 的 mode
 ## 6. 运行
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 source .venv/bin/activate
 cd ret2text
 
@@ -217,7 +217,7 @@ HOST=<ip> PORT=3847 python 27_jarvisoj_http_exp.py
 兜底方案：用 `LD_PRELOAD` 把 `AF_INET/SOCK_STREAM` 监听改写成 `AF_UNIX`，fd 编号不变：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 gcc -shared -fPIC -O2 -o tools/loopback_unix_shim.so tools/loopback_unix_shim.c -ldl
 cd ret2text
 USE_UNIX=1 python 27_jarvisoj_http_exp.py LOCAL
@@ -230,8 +230,8 @@ SHIM_LOG=/tmp/http_shim.log USE_UNIX=1 python 27_jarvisoj_http_exp.py LOCAL
 grep -v 'b=' /tmp/http_shim.log | tail
 ```
 
-> **坑：`LD_PRELOAD` 按空格分库**。仓库路径 `Pwn Writeups` 含空格，若把 `SHIM` 写成
-> 绝对路径（`/home/.../Pwn Writeups/tools/...so`），loader 会把它拆成两个库名并静默跳过，
+> **坑：`LD_PRELOAD` 按空格分库**。若仓库路径含空格（2026-11-25 前本仓库就是 `Pwn Writeups`），
+> 把 `SHIM` 写成绝对路径（`/home/.../Pwn Writeups/tools/...so`），loader 会把它拆成两个库名并静默跳过，
 > 现象是“连不上 `HTTP_UNIX` 的 socket”。EXP 的默认值 `../tools/loopback_unix_shim.so`
 > 是相对路径、不含空格，因此可用；要显式指定就先
 > `cp tools/loopback_unix_shim.so /tmp/unix_shim.so`，再 `SHIM=/tmp/unix_shim.so`。

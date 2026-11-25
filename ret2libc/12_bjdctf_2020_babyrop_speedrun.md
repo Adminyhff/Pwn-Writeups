@@ -32,7 +32,7 @@ Stage 2:
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file bjdctf_2020_babyrop
 checksec --file=bjdctf_2020_babyrop
@@ -329,7 +329,7 @@ if __name__ == "__main__":
 本地验证：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 ../.venv/bin/python 12_bjdctf_2020_babyrop_exp.py LOCAL
 ```
 

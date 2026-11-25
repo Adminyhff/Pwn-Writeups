@@ -35,7 +35,7 @@ _exit @0x0804809d:
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2shellcode'
+cd '/home/yfhd5/Pwn_Writeups/ret2shellcode'
 
 file pwnable_start                      # ELF 32-bit i386, statically linked
 readelf -hW pwnable_start | grep Type    # EXEC -> No PIE

@@ -56,7 +56,7 @@ main 中直接执行 system("/bin/sh") 或 execve("/bin//sh")
 ## 4. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/network_interaction_free_shell'
+cd '/home/yfhd5/Pwn_Writeups/network_interaction_free_shell'
 
 # 静态确认“白给 shell”
 file test_your_nc

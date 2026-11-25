@@ -29,7 +29,7 @@ PIE 是干扰项；这题唯一要解决的是 **CTF² 的 TLS 连接**，连上
 在仓库根目录、已激活 `.venv` 的前提下：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/network_interaction_free_shell'
+cd '/home/yfhd5/Pwn_Writeups/network_interaction_free_shell'
 
 file test_your_nc
 checksec --file=test_your_nc

@@ -67,7 +67,7 @@ ret2win@plt(0x400510)
 ## 5. 本地复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2csu'
+cd '/home/yfhd5/Pwn_Writeups/ret2csu'
 source ../.venv/bin/activate
 python 30_ropemporium_ret2csu_exp.py LOCAL
 # 输出：ROPE{a_placeholder_32byte_flag!}

@@ -188,7 +188,7 @@ p.sendlineafter(b"your choice", b"/bin/sh")
 ## 5. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 # 静态确认
 file '[NewStarCTF 2023 公开赛道]ret2libc'

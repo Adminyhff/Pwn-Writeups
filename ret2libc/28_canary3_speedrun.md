@@ -35,7 +35,7 @@ menu（main, buf = rbp-0x20，canary @ rbp-0x8）：
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file canary3
 readelf -lW canary3 | grep -E 'GNU_RELRO|GNU_STACK'
@@ -145,7 +145,7 @@ assert len(payload) <= 0x64                              # read(0, buf, 0x64) �
 ## 6. 运行
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 source .venv/bin/activate
 cd ret2libc
 

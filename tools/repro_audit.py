@@ -9,7 +9,7 @@
   4. 文档是否含 bash 运行块、是否残留 TODO/待补 之类占位符
 
 用法（先激活仓库 .venv）：
-    cd '/home/yfhd5/Pwn Writeups'
+    cd '/home/yfhd5/Pwn_Writeups'
     source .venv/bin/activate
     python tools/repro_audit.py          # 文本表 + 汇总，有缺口时退出码 1
     python tools/repro_audit.py --md     # Markdown 表，可直接贴进 README

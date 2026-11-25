@@ -46,7 +46,7 @@ round 2: system("/bin/sh")              （第二遍同样的三步）
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file pwnable_silverbullet
 strings -tx pwnable_silverbullet | grep -Ei 'bullet|werewolf|power|win'
@@ -238,7 +238,7 @@ def fire(p, payload):
 32 位二进制没有 `/lib/ld-linux.so.2` 时要用 i386 loader：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 echo 'flag{SILVER_LOCAL}' > flag.txt
 I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \

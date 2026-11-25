@@ -35,7 +35,7 @@ cdecl 参数布局：
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file jarvisoj_level4
 checksec --file=jarvisoj_level4
@@ -350,7 +350,7 @@ if __name__ == "__main__":
 ### 本地验证（需要 i386 loader）
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 ../.venv/bin/python 10_jarvisoj_level4_exp.py LOCAL

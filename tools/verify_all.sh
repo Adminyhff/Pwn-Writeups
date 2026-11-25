@@ -5,7 +5,7 @@
 #      不做远程打靶，不依赖 BUUCTF 靶机。
 #
 # 用法：
-#   cd '/home/yfhd5/Pwn Writeups'
+#   cd '/home/yfhd5/Pwn_Writeups'
 #   bash tools/verify_all.sh              # 全部
 #   bash tools/verify_all.sh 26 27 28     # 只跑指定题号
 #

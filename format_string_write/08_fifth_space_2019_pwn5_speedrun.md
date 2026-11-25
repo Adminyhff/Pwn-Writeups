@@ -44,7 +44,7 @@ b"4"
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/format_string_write'
+cd '/home/yfhd5/Pwn_Writeups/format_string_write'
 
 file '[第五空间2019决赛]PWN5'
 checksec --file='[第五空间2019决赛]PWN5'
@@ -323,7 +323,7 @@ if __name__ == "__main__":
 如果系统已经装了 `libc6-i386`：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/format_string_write'
+cd '/home/yfhd5/Pwn_Writeups/format_string_write'
 python 08_fifth_space_2019_pwn5_exp.py LOCAL
 ```
 
@@ -335,7 +335,7 @@ apt-get download libc6-i386=2.43-2ubuntu2
 mkdir -p libc6i386
 dpkg-deb -x libc6-i386_*_amd64.deb libc6i386
 
-cd '/home/yfhd5/Pwn Writeups/format_string_write'
+cd '/home/yfhd5/Pwn_Writeups/format_string_write'
 I386_LD=/tmp/libc6i386/usr/lib32/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc6i386/usr/lib32 \
 python 08_fifth_space_2019_pwn5_exp.py LOCAL

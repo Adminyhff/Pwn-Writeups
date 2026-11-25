@@ -38,7 +38,7 @@ saved RIP   = buf + 0x3028  ->  第 4 条 message 的 +0x88
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/sandbox_seccomp'
+cd '/home/yfhd5/Pwn_Writeups/sandbox_seccomp'
 file easyroptocol
 readelf -hW easyroptocol | grep Type                 # EXEC -> No PIE
 readelf -lW easyroptocol | grep -E 'LOAD|STACK'      # GNU_STACK=RWE? 否，NX 开
@@ -244,7 +244,7 @@ stage1 只负责把 libc 基址算出来。
 ## 6. 运行与实测
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 .venv/bin/python sandbox_seccomp/24_easyroptocol_exp.py
 # 远端（把 HOST/PORT 换成靶机）：
 .venv/bin/python sandbox_seccomp/24_easyroptocol_exp.py remote HOST PORT

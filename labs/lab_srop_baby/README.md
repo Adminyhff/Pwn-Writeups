@@ -74,7 +74,7 @@ uid=1000(yfhd5) gid=1000(yfhd5) ...
 ## 4. 复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/labs/lab_srop_baby'
+cd '/home/yfhd5/Pwn_Writeups/labs/lab_srop_baby'
 make                                   # as + ld，无 libc 依赖
 python exp.py                          # 需要 pwntools（仓库 .venv）
 ```

@@ -8,7 +8,7 @@
 > 的临时靶机（已下线），但脚本**带 `LOCAL` 分支**。本地复现：
 >
 > ```bash
-> cd '/home/yfhd5/Pwn Writeups/ret2text'
+> cd '/home/yfhd5/Pwn_Writeups/ret2text'
 > echo 'flag{LOCAL}' > flag.txt
 > python 05_get_started_3dsctf_2016_exp.py LOCAL
 > ```
@@ -41,7 +41,7 @@ gets() 栈溢出
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 
 file get_started_3dsctf_2016
 checksec --file=get_started_3dsctf_2016

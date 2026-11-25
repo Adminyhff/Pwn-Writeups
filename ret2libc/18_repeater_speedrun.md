@@ -45,7 +45,7 @@ b"A" * 0x28 + p64(canary) + p64(0) \
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file repeater
 checksec --file=repeater
@@ -221,7 +221,7 @@ p.sendline(b"1")
 ## 4. 本地验证
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 # 没有 flag 文件也能验证 shell：会打印 __PWNED__
 python 18_repeater_exp.py LOCAL

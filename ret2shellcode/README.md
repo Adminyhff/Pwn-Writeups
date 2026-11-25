@@ -51,7 +51,7 @@ NX 关闭（GNU_STACK = RWE / `readelf -lW | grep STACK` 看到 RWE）
 ## 3. 运行
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2shellcode'
+cd '/home/yfhd5/Pwn_Writeups/ret2shellcode'
 echo 'flag{LOCAL}' > flag.txt
 python 21_pwnable_start_exp.py            # 本地
 python 21_pwnable_start_exp.py REMOTE     # 远程 chall.pwnable.tw:10000

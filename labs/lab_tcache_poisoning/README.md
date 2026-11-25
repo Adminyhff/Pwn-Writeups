@@ -74,7 +74,7 @@ trigger()                          # fh.fn() == backdoor → system("cat flag.tx
 ## 5. 复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/labs/lab_tcache_poisoning'
+cd '/home/yfhd5/Pwn_Writeups/labs/lab_tcache_poisoning'
 source ../../.venv/bin/activate
 make                                   # gcc 一条命令重建
 printf '__PWNED__{tcache_ok}\n' > flag.txt

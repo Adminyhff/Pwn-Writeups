@@ -61,7 +61,7 @@ frame_dummy -> register_tm_clones   全程只用 rax/rsi/rdi/rbp，不写 rdx
 ## 4. 运行方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2csu'
+cd '/home/yfhd5/Pwn_Writeups/ret2csu'
 source ../.venv/bin/activate
 python 30_ropemporium_ret2csu_exp.py LOCAL     # 需要 libret2csu.so / key.dat 在同目录
 ```

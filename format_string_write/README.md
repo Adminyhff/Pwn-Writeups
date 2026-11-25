@@ -143,7 +143,7 @@ name 首地址 = ebp - 0x70
 ## 7. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/format_string_write'
+cd '/home/yfhd5/Pwn_Writeups/format_string_write'
 
 file '[第五空间2019决赛]PWN5'
 checksec --file='[第五空间2019决赛]PWN5'

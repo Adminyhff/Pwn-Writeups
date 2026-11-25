@@ -103,7 +103,7 @@ payload = p64(POP_RAX_RET) + p64(15) + p64(SYSCALL_RET) + bytes(frame)
 ## 4. 运行
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/labs/lab_srop_baby'
+cd '/home/yfhd5/Pwn_Writeups/labs/lab_srop_baby'
 make                       # as + ld，无 libc 依赖
 python exp.py              # 仓库 .venv 内的 pwntools
 ```

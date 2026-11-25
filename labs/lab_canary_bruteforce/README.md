@@ -77,7 +77,7 @@ child 并再打印 `payload: `，光看提示符无法区分对错。
 ## 5. 复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/labs/lab_canary_bruteforce'
+cd '/home/yfhd5/Pwn_Writeups/labs/lab_canary_bruteforce'
 source ../../.venv/bin/activate
 make
 printf '__PWNED__{canary_ok}\n' > flag.txt

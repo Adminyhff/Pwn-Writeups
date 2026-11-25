@@ -52,7 +52,7 @@ notelist[0] 仍指向 C0，show(0) 调用 magic()。
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/heap_uaf'
+cd '/home/yfhd5/Pwn_Writeups/heap_uaf'
 
 file hitcontraining_uaf
 checksec --file=hitcontraining_uaf
@@ -368,7 +368,7 @@ if __name__ == "__main__":
 本地验证：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/heap_uaf'
+cd '/home/yfhd5/Pwn_Writeups/heap_uaf'
 I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 ../.venv/bin/python 14_hitcontraining_uaf_exp.py LOCAL

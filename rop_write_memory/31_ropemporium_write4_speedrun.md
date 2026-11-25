@@ -79,7 +79,7 @@ print_file@plt                # 0x400510  -> print_file("flag.txt")
 ## 5. 本地复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/rop_write_memory'
+cd '/home/yfhd5/Pwn_Writeups/rop_write_memory'
 source ../.venv/bin/activate
 python 31_ropemporium_write4_exp.py LOCAL
 # Thank you!

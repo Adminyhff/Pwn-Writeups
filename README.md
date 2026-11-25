@@ -11,7 +11,7 @@
 同一模式下的题目文件统一放在以该模式命名的目录中，文件名使用 `<题号>_<题目名>_<类型>` 前缀避免冲突。
 
 ```text
-Pwn Writeups/
+Pwn_Writeups/
 ├── README.MD
 ├── PATTERN_CLASSIFICATION.md          # 全部题目的模式分类与判定依据
 ├── notes.md                           # Python / Linux / pwntools Cheat Sheet
@@ -193,7 +193,7 @@ Pwn Writeups/
 ## Quick Start
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 source .venv/bin/activate
 
 # 按模式进入目录
@@ -365,7 +365,7 @@ python exp.py
 5. 标出“`HOST` 写死在脚本里”的题（CTF² 临时靶机，早已下线）。
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups' && source .venv/bin/activate
+cd '/home/yfhd5/Pwn_Writeups' && source .venv/bin/activate
 python tools/repro_audit.py          # 文本表；有文档缺口时退出码 1
 python tools/repro_audit.py --md     # Markdown 表（本节的表就是它生成的）
 python tools/repro_audit.py 08 19    # 只审指定题号
@@ -476,7 +476,7 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 每题跑一次 smoke test，成功与否用输出里的固定字符串判定：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups' && source .venv/bin/activate
+cd '/home/yfhd5/Pwn_Writeups' && source .venv/bin/activate
 bash tools/verify_all.sh              # 全部
 bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/verify_all/<题号>.log）
 ```
@@ -506,6 +506,15 @@ bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/veri
 `exp` 里 stage-1 的挡板 `create(8)` 不成立 → 需要重写 stage-1 布局；确认修好后用
 `CARD227_LEAK_OK=1 bash tools/verify_all.sh 26` 再跑。见 `PATTERN_CLASSIFICATION.md` §5.7。）
 
-> **`LD_PRELOAD` 与空格**：仓库路径 `Pwn Writeups` 含空格，`LD_PRELOAD` 会按空格切分多个库，
-> 所以 27 的兜底方案里 `SHIM` 必须给**不含空格的相对路径**（默认 `../tools/loopback_unix_shim.so`）
-> 或先 `cp` 到 `/tmp` 再引用，否则 shim 静默不生效（表现为“连不上 `HTTP_UNIX` 的 socket”）。
+> **`LD_PRELOAD` 与空格**：`LD_PRELOAD` 按空格切分库列表，路径带空格就会被拆成两个库名并静默跳过
+> （本仓库 2026-11-25 前的路径 `Pwn Writeups` 正是这种）。27 的兜底方案因此仍要求 `SHIM` 用
+> **相对路径**（默认 `../tools/loopback_unix_shim.so`）或先 `cp` 到 `/tmp` 再引用，
+> 否则 shim 静默不生效（表现为“连不上 `HTTP_UNIX` 的 socket”）。
+
+> **仓库路径禁忌（2026-11-25）**：路径不要含空格，推荐 `/home/yfhd5/Pwn_Writeups`。
+> 两条实测理由：① Linux shebang 只取第一个空白之前的内容，旧 venv 里
+> `#!/home/yfhd5/Pwn Writeups/.venv/bin/python` 会被解释成 `/home/yfhd5/Pwn` → `bad interpreter`
+> （`ROPgadget` / `readelf.py` 当时就是这么坏的，已改 `#!/usr/bin/env python3`）；
+> ② `activate` 里的 `VIRTUAL_ENV` 是写死路径，目录改名/移动会让 venv 静默失效
+> （表现为 `which python` 落回 `/usr/bin/python3`、`import pwn` 失败）；现已改成自解析，
+> 但仍建议不要给仓库路径加空格。顺带一提，`LD_PRELOAD` 也按空格分库（见上一条）。

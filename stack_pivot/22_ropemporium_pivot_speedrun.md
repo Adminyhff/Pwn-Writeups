@@ -37,7 +37,7 @@ usefulGadgets:
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/stack_pivot'
+cd '/home/yfhd5/Pwn_Writeups/stack_pivot'
 file pivot libpivot.so
 readelf -hW pivot | grep Type                 # EXEC -> No PIE
 readelf -lW pivot | grep GNU_STACK            # RW -> NX

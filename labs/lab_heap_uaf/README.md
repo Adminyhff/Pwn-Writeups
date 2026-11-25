@@ -73,7 +73,7 @@ show(1)                     # stale notes[1] = S1 → fn(data) = backdoor()
 ## 5. 复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/labs/lab_heap_uaf'
+cd '/home/yfhd5/Pwn_Writeups/labs/lab_heap_uaf'
 source ../../.venv/bin/activate
 make
 printf '__PWNED__{uaf_ok}\n' > flag.txt

@@ -81,7 +81,7 @@
 ## 4. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 
 # 02
 python 02_rip_exp.py

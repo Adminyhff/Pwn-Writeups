@@ -48,7 +48,7 @@ system("echo 你不是...");
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 
 file '[NewStarCTF 公开赛赛道]canary/pwn'
 checksec --file='[NewStarCTF 公开赛赛道]canary/pwn'
@@ -371,7 +371,7 @@ if __name__ == "__main__":
 本地验证：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 ../.venv/bin/python 09_canary_exp.py LOCAL
 ```
 

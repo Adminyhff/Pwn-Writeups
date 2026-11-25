@@ -98,7 +98,7 @@ key = 2 恰好满足（`0x601030..0x601037` 的地址字节是 `0x30..0x37`、`0
 ## 5. 本地复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/badchars_encoding'
+cd '/home/yfhd5/Pwn_Writeups/badchars_encoding'
 source ../.venv/bin/activate
 python 32_ropemporium_badchars_exp.py LOCAL
 # Thank you!

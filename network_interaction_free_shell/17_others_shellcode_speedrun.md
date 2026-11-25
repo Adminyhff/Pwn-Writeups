@@ -36,7 +36,7 @@ getShell:
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/network_interaction_free_shell'
+cd '/home/yfhd5/Pwn_Writeups/network_interaction_free_shell'
 
 file others_shellcode
 checksec --file=others_shellcode
@@ -143,7 +143,7 @@ int 0x80                   -> execve("/bin//sh", argv, NULL)
 ### 2.1 本地直接交互
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/network_interaction_free_shell'
+cd '/home/yfhd5/Pwn_Writeups/network_interaction_free_shell'
 printf 'echo SHELL_OK; id; exit\n' | ./others_shellcode
 ```
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
 本地验证：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/network_interaction_free_shell'
+cd '/home/yfhd5/Pwn_Writeups/network_interaction_free_shell'
 I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 ../.venv/bin/python 17_others_shellcode_exp.py LOCAL

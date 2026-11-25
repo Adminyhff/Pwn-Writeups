@@ -70,7 +70,7 @@ for i in range(12):
 ## 3. 运行
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/sandbox_seccomp'
+cd '/home/yfhd5/Pwn_Writeups/sandbox_seccomp'
 
 # 1) 仅 23 需要：生成本地可执行版（现代内核 .bss 是 RW，需要给 PT_LOAD 加 PF_X）
 python make_local_exec.py

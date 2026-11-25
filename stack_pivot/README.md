@@ -51,7 +51,7 @@ read/gets 的长度很小，装不下完整 ROP 链
 ## 3. 运行
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/stack_pivot'
+cd '/home/yfhd5/Pwn_Writeups/stack_pivot'
 # RUNPATH=. 已内置，libpivot.so 与 pivot 放同目录即可
 echo '__PWNED__{LOCAL}' > flag.txt
 python 22_ropemporium_pivot_exp.py

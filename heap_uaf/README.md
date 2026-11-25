@@ -60,7 +60,7 @@ struct note {
 ## 4. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/heap_uaf'
+cd '/home/yfhd5/Pwn_Writeups/heap_uaf'
 
 I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \

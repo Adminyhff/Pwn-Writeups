@@ -55,7 +55,7 @@ assert not set(payload) & set(b"xga.")
 ## 5. 运行方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/badchars_encoding'
+cd '/home/yfhd5/Pwn_Writeups/badchars_encoding'
 source ../.venv/bin/activate
 python 32_ropemporium_badchars_exp.py LOCAL
 

@@ -34,7 +34,7 @@ main()      @ 0x40090b   sub rsp,0x120；buf = rbp-0x110；canary = rbp-0x8
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file bbbaby_pwn1
 readelf -hW bbbaby_pwn1 | grep Type          # EXEC -> No PIE
@@ -246,7 +246,7 @@ def overflow(p, chain):             # case 1
 ## 6. 本地 / 远程验证
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 echo 'flag{BB_LOCAL}' > flag.txt
 python 20_bbbaby_pwn1_exp.py LOCAL        # 用本机 libc

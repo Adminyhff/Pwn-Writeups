@@ -40,7 +40,7 @@ choice = 0                         -> 离开循环，触发 ret
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file putsorsys
 checksec --file=putsorsys
@@ -416,7 +416,7 @@ if __name__ == "__main__":
 本地验证（用 bundled libc + 一个匹配的 2.35 loader）：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 LIBC=./libc.so.6 \
 LD_SO=/tmp/libc235/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 \
 LIBC_DIR=. \

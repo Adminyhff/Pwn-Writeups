@@ -34,7 +34,7 @@ Stage 2:
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file '铁人三项（第五赛区）2018_rop'
 checksec --file='铁人三项（第五赛区）2018_rop'
@@ -324,7 +324,7 @@ if __name__ == "__main__":
 本地验证：
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 I386_LD=/tmp/libc32/root/usr/lib/i386-linux-gnu/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc32/root/usr/lib/i386-linux-gnu \
 ../.venv/bin/python 11_2018_rop_exp.py LOCAL

@@ -48,7 +48,7 @@
 ## 1. 30 秒定性质
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 file rec_33c3_2016
 readelf -hW rec_33c3_2016 | grep Type
@@ -337,7 +337,7 @@ ls /tmp/libc224/root/lib/ld-linux.so.2 \
 ```
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 echo 'flag{rec_local_ok}' > flag.txt
 
 I386_LD=/tmp/libc224/root/lib/ld-linux.so.2 \
@@ -470,7 +470,7 @@ system             = 0x3a8b0
 ### 8.1 环境（一次性）
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 python3 -m venv .venv          # 已存在则跳过
 source .venv/bin/activate      # 本仓库所有命令都要求先激活 .venv
 pip install -r requirements.txt
@@ -482,7 +482,7 @@ python -c 'import pwn; print(pwn.__version__)'
 ### 8.2 取题目二进制，并校验
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/ret2libc'
+cd '/home/yfhd5/Pwn_Writeups/ret2libc'
 
 # 公开归档：ctfs/write-ups-2016 的 33c3-ctf/pwn/rec-200
 curl -fsSL -o rec_33c3_2016 \
@@ -518,7 +518,7 @@ md5sum /tmp/libc224/root/lib/i386-linux-gnu/libc.so.6
 # 期望：79f8c0d940ae393b3ad1be40892c9c84
 
 cp /tmp/libc224/root/lib/i386-linux-gnu/libc.so.6 \
-   '/home/yfhd5/Pwn Writeups/ret2libc/libc-2.24.so'
+   '/home/yfhd5/Pwn_Writeups/ret2libc/libc-2.24.so'
 ```
 
 > `/tmp/libc224` 只是临时解包目录，重装系统后按上面三行重建即可。
@@ -527,7 +527,7 @@ cp /tmp/libc224/root/lib/i386-linux-gnu/libc.so.6 \
 ### 8.4 跑通（一条命令）
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups'
+cd '/home/yfhd5/Pwn_Writeups'
 source .venv/bin/activate
 cd ret2libc
 

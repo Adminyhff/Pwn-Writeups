@@ -130,7 +130,7 @@ uid=1000(yfhd5) gid=1000(yfhd5) groups=1000(yfhd5),4(adm),24(cdrom),27(sudo),...
 ## 7. 复现
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/fsop'
+cd '/home/yfhd5/Pwn_Writeups/fsop'
 source ../.venv/bin/activate
 
 # i386 2.24 附件（loader 不入库，从 deb 解包；libc 复用 ret2libc 里那份）
@@ -138,7 +138,7 @@ mkdir -p /tmp/libc224i32 && cd /tmp/libc224i32
 # apt-get download libc6:i386=2.24-3ubuntu2.2  或从 archive.ubuntu.com 取同名 deb
 dpkg-deb -x libc6_2.24-3ubuntu2.2_i386.deb root
 cp root/lib/ld-linux.so.2 root/lib/i386-linux-gnu/libc-2.24.so .
-cd '/home/yfhd5/Pwn Writeups/fsop'
+cd '/home/yfhd5/Pwn_Writeups/fsop'
 
 I386_LD=/tmp/libc224i32/ld-linux.so.2 \
 I386_LIBPATH=/tmp/libc224i32 \

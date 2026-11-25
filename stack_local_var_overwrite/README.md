@@ -66,7 +66,7 @@ b'A' * 44 + struct.pack("<f", 11.28125)
 ## 5. 使用方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/stack_local_var_overwrite'
+cd '/home/yfhd5/Pwn_Writeups/stack_local_var_overwrite'
 
 file ciscn_2019_n_1
 checksec --file=ciscn_2019_n_1

@@ -45,7 +45,7 @@
 ## 4. 运行方式
 
 ```bash
-cd '/home/yfhd5/Pwn Writeups/rop_write_memory'
+cd '/home/yfhd5/Pwn_Writeups/rop_write_memory'
 source ../.venv/bin/activate
 python 31_ropemporium_write4_exp.py LOCAL
 
