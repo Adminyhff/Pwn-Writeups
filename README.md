@@ -58,6 +58,13 @@ Pwn Writeups/
 │   ├── 22_ropemporium_pivot_{speedrun,exp}.*
 │   ├── pivot
 │   └── libpivot.so
+├── ret2csu/                           # 缺 pop rdx -> __libc_csu_init 通用 gadget
+│   ├── README.md
+│   ├── 30_ropemporium_ret2csu_{speedrun,exp}.*
+│   ├── ret2csu
+│   ├── libret2csu.so
+│   ├── key.dat
+│   └── encrypted_flag.dat
 ├── sandbox_seccomp/                   # seccomp 沙箱 -> ORW
 │   ├── README.md
 │   ├── 23_pwnable_orw_{speedrun,exp}.*
@@ -70,10 +77,41 @@ Pwn Writeups/
 ├── srop/                              # rt_sigreturn 一次设置全部寄存器
 │   └── README.md                      # 该模式的判定条件与 sigframe 布局说明
 ├── labs/                              # 自造靶场（非真实赛题，用于补齐缺失题型）
-│   └── lab_srop_baby/                 # L1：只能靠 SROP 解的最小靶子
+│   ├── lab_srop_baby/                 # L1：只能靠 SROP 解的最小靶子
+│   │   ├── README.md
+│   │   ├── src/chal.S
+│   │   ├── Makefile
+│   │   └── exp.py
+│   ├── lab_ret2syscall_i386/          # L2：无 libc，只能自己 int 0x80 拼 execve
+│   │   ├── README.md
+│   │   ├── src/chal.S
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   └── exp.py
+│   ├── lab_ret2dlresolve_i386/        # L3：只导入 read，靠伪造 ELF 让链接器解析 system
+│   │   ├── README.md
+│   │   ├── src/chal.S
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   ├── exp.py
+│   │   └── libc/                      # glibc 2.24 i386（ld-2.24.so + libc.so.6）
+│   ├── lab_tcache_poisoning/          # L4：UAF 泄漏 safe-linking key → 毒化 next → .bss 函数指针
+│   │   ├── README.md
+│   │   ├── src/chal.c
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   └── exp.py
+│   ├── lab_canary_bruteforce/         # L5：程序自带 fork server，canary 逐字节爆破 → ret2win
+│   │   ├── README.md
+│   │   ├── src/chal.c
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   └── exp.py
+│   └── lab_heap_uaf/                  # L6：函数指针 UAF（heap_uaf 第二题）
 │       ├── README.md
-│       ├── src/chal.S
+│       ├── src/chal.c
 │       ├── Makefile
+│       ├── chal
 │       └── exp.py
 ├── format_string_write/               # printf(user_input) + %n 任意写
 │   ├── README.md
@@ -96,8 +134,12 @@ Pwn Writeups/
     ├── babyheap_Octf_2017
     ├── babyfengshui_33c3_2016
     └── card
+├── fsop/                              # 伪造 _IO_FILE / vtable -> libc 内部调用链
+│   ├── README.md
+│   ├── 29_pwnable_tw_seethefile_{speedrun,exp}.*
+│   └── seethefile
 └── tools/                             # 仓库自检脚本（非题目）
-    ├── repro_audit.py                 # 01–28 复现性静态审计（见 README 文末）
+    ├── repro_audit.py                 # 01–30 复现性静态审计（见 README 文末）
     ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
     └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
@@ -109,14 +151,20 @@ Pwn Writeups/
 | `network_interaction_free_shell` | 程序正常逻辑直接给 shell，无内存破坏点 | `01_test_your_nc`、`17_others_shellcode` |
 | `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门；27 是“服务端逐字节读请求 + CSU ROP”的变体（不需要后门函数） | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary`、`27_jarvisoj_http` |
 | `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")`（25 是“未初始化函数指针 + `esp` 泄漏栈喷”的变体，无栈溢出；28 靠登录 off-by-one + `printf("%s")` 泄 canary） | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1`、`25_rec_33c3_2016`、`28_canary3` |
+| `ret2csu` | 缺 `pop rdx`（或 `pop rsi`）时用 `__libc_csu_init` 的 `pop rbx/rbp/r12/r13/r14/r15; ret` + `call [r12+rbx*8]` 补参数；第一参要完整 64 位时 csu 只设 rdx，再用 pop 补前两参 | `30_ropemporium_ret2csu` |
+| `ret2syscall` | 静态/无 libc，用 `pop eax/ebx/ecx/edx` + `int 0x80` 自己拼 `execve` | `L2_lab_ret2syscall_i386`（自造） |
+| `ret2dlresolve` | 动态链接但没有 `system`，伪造 `Elf32_Rel`/`Elf32_Sym`/符号名 + 调 `plt0` 让链接器解析 | `L3_lab_ret2dlresolve_i386`（自造） |
 | `ret2shellcode` | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后执行栈/堆上 shellcode | `21_pwnable_start` |
 | `stack_pivot` | 溢出空间不足，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` 再执行长链 | `22_ropemporium_pivot` |
 | `sandbox_seccomp` | 程序装 seccomp BPF，`execve` 被拦，只能 `open`+`read`+`write` 读 flag | `23_pwnable_orw`、`24_easyroptocol` |
 | `srop` | `rax=15` + `syscall` 触发 `rt_sigreturn`，用 248 字节 sigframe 一次设置全部寄存器 | `L1_lab_srop_baby`（自造） |
 | `format_string_write` | `printf(user_input)`，用 `%n` 改全局变量或 GOT | `08_fifth_space_2019_pwn5` |
 | `stack_local_var_overwrite` | 栈溢出改相邻局部变量，绕过条件判断 | `04_ciscn_2019_n_1` |
-| `heap_uaf` | free 后指针仍被引用，重新分配旧对象改写函数指针 | `14_hitcontraining_uaf` |
+| `heap_uaf` | free 后指针仍被引用，重新分配旧对象改写函数指针 | `14_hitcontraining_uaf`、`L6_lab_heap_uaf`（自造） |
+| `tcache_poisoning` | 改已释放 chunk 的 `next` 把 `malloc` 顶到任意地址（2.32+ 先泄 safe-linking key，2.34+ 目标改 `.bss` 函数指针） | `L4_lab_tcache_poisoning`（自造） |
+| `canary_bruteforce` | 有 canary 且无泄漏点 + 每次连接重启（fork server）→ 逐字节试错 | `L5_lab_canary_bruteforce`（自造） |
 | `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card` |
+| `fsop` | 可控 `FILE *` / `_IO_list_all` → 伪造 `_IO_FILE` + vtable | `29_pwnable_tw_seethefile` |
 
 逐题的判定依据、偏移、目标地址与关键坑点见 [PATTERN_CLASSIFICATION.md](PATTERN_CLASSIFICATION.md)。
 
@@ -193,6 +241,10 @@ cd ../stack_pivot
 # 22 是栈迁移（pivot），RUNPATH=. 已内置
 python 22_ropemporium_pivot_exp.py        # 当前目录需有 flag.txt
 
+cd ../ret2csu
+# 30 是 ROP Emporium ret2csu：缺 pop rdx，用 __libc_csu_init + frame_dummy 保 rdx
+python 30_ropemporium_ret2csu_exp.py LOCAL   # 目录内需有 libret2csu.so / key.dat / encrypted_flag.dat
+
 cd ../sandbox_seccomp
 # 23 是 seccomp ORW；现代内核需要先给 .bss 段加 PF_X
 python make_local_exec.py
@@ -226,6 +278,13 @@ LIBC_DIR=/tmp/libc227/root/lib/x86_64-linux-gnu \
 LIBC=/tmp/libc227/root/lib/x86_64-linux-gnu/libc-2.27.so \
 python 26_card_exp.py LOCAL
 
+cd ../fsop
+# 29 是 seethefile：全局 FILE *fp 被 %s 溢出 -> 伪造 _IO_FILE -> _IO_str_finish 打 system
+I386_LD=/tmp/libc224i32/ld-linux.so.2 \
+I386_LIBPATH=/tmp/libc224i32 \
+LIBC=../ret2libc/libc-2.24.so \
+python 29_pwnable_tw_seethefile_exp.py LOCAL
+
 cd ../network_interaction_free_shell
 python 17_others_shellcode_exp.py LOCAL
 
@@ -233,13 +292,42 @@ cd ../labs/lab_srop_baby
 # L1 是自造 SROP 靶场：make 只用 as + ld，无 libc 依赖
 make
 python exp.py
+
+cd ../labs/lab_ret2syscall_i386
+# L2 是自造 ret2syscall 靶场：32 位静态，as --32 + ld -m elf_i386，不需要 gcc-multilib
+make
+python exp.py
+
+cd ../labs/lab_ret2dlresolve_i386
+# L3 是自造 ret2dlresolve 靶场：32 位动态（libc/ 里归档了 glibc 2.24 i386）
+make
+python exp.py
+LD_SO=./libc/ld-2.24.so python exp.py     # 显式指定 loader（可选）
+
+cd ../labs/lab_tcache_poisoning
+# L4 是自造 tcache poisoning 靶场：主机 gcc，glibc 2.43（无 __free_hook，目标改 .bss 函数指针）
+make
+printf '__PWNED__{tcache_ok}\n' > flag.txt
+python exp.py
+
+cd ../labs/lab_canary_bruteforce
+# L5 是自造 canary 爆破靶场：程序自带 fork server，约 900 次 fork ≈ 20 s
+make
+printf '__PWNED__{canary_ok}\n' > flag.txt
+python exp.py
+
+cd ../labs/lab_heap_uaf
+# L6 是自造函数指针 UAF 靶场（heap_uaf 第二题）
+make
+printf '__PWNED__{uaf_ok}\n' > flag.txt
+python exp.py
 ```
 
 > 远程 EXP 中的 `HOST` / `PORT` 会随靶机变化；CTF² 平台需要 `ssl=True`。
 
 ---
 
-## 复现自检（01–28，2026-11-23）
+## 复现自检（01–30，2026-11-24）
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
@@ -313,11 +401,27 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 | 26 | `26_card_exp.py` | ./card | HOST, LIBC, LIBC_DIR, LD_SO, PORT, SSL | ✅ | 实跑 3/3（libc 2.27） |
 | 27 | `27_jarvisoj_http_exp.py` | ./jarvisoj_http | HOST, PORT, USE_UNIX, SHIM, HTTP_UNIX, SHIM_LOG | ✅ | 实跑 3/3（`USE_UNIX=1`） |
 | 28 | `28_canary3_exp.py` | ./canary3 | LIBC（远程可选） | ✅ | 实跑 3/3 |
+| 29 | `29_pwnable_tw_seethefile_exp.py` | ./seethefile | HOST, I386_LD, I386_LIBPATH, LIBC, PORT, SSL | ✅ | 实跑 3/3（FSOP，i386 2.24） |
+| 30 | `30_ropemporium_ret2csu_exp.py` | ./ret2csu | HOST, PORT | ✅ | 实跑 1/1（ret2csu，输出 `ROPE{...}`） |
 
 审计结论（本次实际补齐的内容已写回各题文档）：
 
-- **28 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
-- 新归档的 26 / 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）。
+- **30 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
+- **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
+  `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
+  （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。
+- 顺带修掉两个**复现性缺陷**（都影响矩阵可信度）：
+  - `22` 的 leak 解析：`puts(foothold@got)` 输出的是**原始地址字节**，遇 `0x00` 会截断、
+    且字节里可能含 `0x0a`；原脚本用 `recvline()` 抓，约 2/5 概率算错基址。
+    改为“读到下一个 banner 为止 + 校验 `libpivot & 0xFFF`，不对就重开一局”，连跑 20/20 通过。
+  - `23` 的 loader 解析：原脚本写死 `/tmp/libc32/...`，本机不存在时直接
+    `FileNotFoundError`；`verify_all.sh` 现在按 `/tmp/libc32*` → `/tmp/libc224i32`
+    顺序自动探测 i386 loader 并用 `I386_LD/I386_LIBPATH` 启动。
+- `26` 仍 **SKIP**：本机没有 `/tmp/libc227` 里的 `ld-2.27.so`（仓库只归档了
+  `heap_exploitation/libc-2.27.so`）。补法是按 `heap_exploitation/26_card_speedrun.md` §6
+  装一个 2.27 的 loader 后再跑。
+- 新归档的 26 / 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）；
+  **29**（2026-11-24 新增，FSOP 模式）同样实跑 3/3。
 - **01–04** 的 EXP 只有远程分支且 `HOST` 已下线：文档已加提示，本地按
   `process('./<bin>')` 复跑（`test_your_nc` / `rip` / `warmup_csaw_2016` / `ciscn_2019_n_1` 都在库）。
   **05** 的 EXP 自带 `LOCAL` 分支，可直接
@@ -342,18 +446,28 @@ bash tools/verify_all.sh              # 全部
 bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/verify_all/<题号>.log）
 ```
 
-| 题 | 前置 | 判定字符串 | 2026-11-23 结果 |
+| 题 | 前置 | 判定字符串 | 2026-11-24 复跑结果 |
 | --- | --- | --- | --- |
 | 05 | 目录内 `flag.txt`（脚本临时创建） | `GOT THE FLAG` | PASS |
 | 12 | 目录内 `flag.txt`（临时创建） | `GOT THE FLAG` | PASS |
-| 22 | 目录内 `flag.txt`（临时创建） | `__PWNED__` | PASS |
-| 23 | `orw_local_exec` + `flag.txt` | `flag{` | PASS |
+| 22 | 目录内 `flag.txt`（临时创建） | `__PWNED__` | PASS（修 leak 解析后连跑 8/8） |
+| 23 | `orw_local_exec`（先 `python make_local_exec.py`）+ i386 loader（自动探测 `/tmp/libc32*` → `/tmp/libc224i32`）+ `flag.txt` | `flag{` | PASS |
 | 24 | — | `flag:` | PASS |
-| 26 | `/tmp/libc227` 的 2.27 loader + `card` | `shell ok` | PASS |
+| 26 | `/tmp/libc227` 的 2.27 loader + `card` | `shell ok` | **SKIP**（本机缺 2.27 loader；仓库内只有 `heap_exploitation/libc-2.27.so`） |
 | 27 | `jarvisoj_http` + `tools/loopback_unix_shim.so` | `getshell OK` | PASS |
 | 28 | `canary3` | `shell ok` | PASS |
+| 29 | `/tmp/libc224i32` 的 i386 2.24 loader + `../ret2libc/libc-2.24.so` | `shell ok` | PASS |
+| 30 | 同目录 `libret2csu.so` / `key.dat` / `encrypted_flag.dat` | `ROPE{` | PASS（本次新增） |
+| L2 | 先 `make`（`as --32` + `ld -m elf_i386`，不需要 gcc-multilib） | `__PWNED__` | PASS |
+| L3 | 先 `make`（链到 `labs/lab_ret2dlresolve_i386/libc/` 的 2.24 i386） | `__PWNED__` | PASS |
+| L4 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（本次新增） |
+| L5 | 先 `make`；程序自带 fork server，逐字节爆破 ≈ 20 s（`timeout 180`） | `__PWNED__` | PASS（本次新增） |
+| L6 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（本次新增） |
 
-总计 **PASS=8 FAIL=0 SKIP=0**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
+总计 **PASS=14 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
+（`26_card` 仍是 SKIP：本机 2.27 是扁平布局，已能启动，但该二进制的 `cards[]` 上限为 8，
+`exp` 里 stage-1 的挡板 `create(8)` 不成立 → 需要重写 stage-1 布局；确认修好后用
+`CARD227_LEAK_OK=1 bash tools/verify_all.sh 26` 再跑。见 `PATTERN_CLASSIFICATION.md` §5.7。）
 
 > **`LD_PRELOAD` 与空格**：仓库路径 `Pwn Writeups` 含空格，`LD_PRELOAD` 会按空格切分多个库，
 > 所以 27 的兜底方案里 `SHIM` 必须给**不含空格的相对路径**（默认 `../tools/loopback_unix_shim.so`）

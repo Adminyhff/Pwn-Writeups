@@ -23,7 +23,7 @@
 | `pivot/libpivot.so` | amd64 / 共享库 | — | NX | 无 | partial | 同上（含 `ret2win@0xa81`、`foothold_function@0x96a`） | ✅ 已归档 |
 | `orw` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `sandbox_seccomp` | ✅ 已归档为 `23_pwnable_orw`（本地需 `orw_local_exec`） |
 | `tcache_tear` | amd64 / 动态 | No | NX | 有 | Full | `tcache_poisoning` | 待做 |
-| `seethefile` | i386 / 动态 | No | NX | 无 | partial | `fsop` | 待做 |
+| `seethefile` | i386 / 动态 | No | NX | 无 | partial | `fsop` | ✅ 已归档为 `fsop/29_pwnable_tw_seethefile`（`_IO_str_finish` FSOP） |
 | `death_note` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `shellcode` / heap | 待做 |
 | `libc-4e5dfd83….so` | amd64 glibc **2.24**（Ubuntu 2.24-9ubuntu2.2） | — | — | — | — | 实测 build-id `aad7dbe330…`，与文件名不符；**不能**当 `tcache_tear` 的 2.27 libc 用 | — |
 | `libc6_2.24-3ubuntu2.2_i386.deb`（解包） | i386 glibc **2.24-3ubuntu2.2**（md5 `79f8c0d9…`） | — | — | — | — | `ret2libc`（33C3 `rec` 本地复现） | ✅ 已归档为 `ret2libc/libc-2.24.so` |
@@ -34,7 +34,10 @@
 - `start` 的 `GNU_STACK` 是 `RWE`，所以它天然是 **ret2shellcode** 而不是 SROP：
   `int 0x80` 前的 `mov al,3/4` 写死，`eax` 无法置成 11。
 - `orw` / `death_note` 同样是栈可执行，但要先过 seccomp 或走堆上 shellcode，单独归类。
-- `seethefile` 是 32 位，需要 32 位 libc；归档前先确认是否需要额外下载 `libc_32.so.6`。
+- `seethefile` 是 32 位，需要 32 位 libc；归档后本地复现用 `ret2libc/libc-2.24.so`
+  （2.24-3ubuntu2.2 i386，md5 `79f8c0d9…`）+ 同 deb 的 `ld-linux.so.2`。
+  该 libc 的 `_IO_str_jumps = 0x1B49C0`、`system = 0x3B020`；EXP 会从 `LIBC` 文件里
+  自己在 `__libc_IO_vtables` 段定位 `_IO_str_jumps`，换版本只需换 `LIBC`。
 - `_vendor/` 下的二进制只用于分析；正式归档的副本在模式目录里，用 `git add -f` 提交。
 - `_vendor/libc-4e5dfd83….so` 版本是 **2.24**（build-id `aad7dbe330…`），不是 pwnable.tw
   `tcache_tear` 配套的 2.27；做 `tcache_tear` 需另下 libc 2.27（仓库内 `card/libc.so` 是
@@ -49,3 +52,11 @@
   打远程时以 leak 出来的 `__libc_start_main` 为准换对应 libc。
 - i386 loader 也要一并解包：`lib/ld-linux.so.2` + `lib/i386-linux-gnu/`，
   EXP 里用 `I386_LD` / `I386_LIBPATH` 指过去（`--library-path` 方式启动）。
+- **`_vendor/ret2csu/`（2026-11-25 补档）**：ROP Emporium `ret2csu.zip`
+  （`https://ropemporium.com/binary/ret2csu.zip`）的原始四件套
+  `ret2csu` / `libret2csu.so` / `key.dat` / `encrypted_flag.dat`。
+  背景：`ret2csu/` 目录里的 `key.dat` 与 `encrypted_flag.dat` 在本轮某次矩阵跑完后不见了
+  （二进制本身没有 `unlink`/`remove` 导入，原因未定位），导致 `30` 一度 FAIL：
+  `Failed to open encrypted_flag.dat`。把它们从 zip 复原后 `cmp` 确认 `ret2csu` 与仓库内二进制完全一致（sha256 `8891368e…`），`libret2csu.so` 也一致（`c8916f77…`）。
+  以后再丢就从这里 `cp` 回去：
+  `cp _vendor/ret2csu/{key.dat,encrypted_flag.dat} ret2csu/`。

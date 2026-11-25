@@ -38,6 +38,12 @@ struct note {
 | 题目 | 架构 | 关键地址 | 利用 |
 | --- | --- | --- | --- |
 | `14_hitcontraining_uaf` | i386 / No PIE | `magic=0x8048945` | 0x10 tcache/fastbin LIFO，让新 content 落回旧 struct，改写 `print=magic` |
+| `L6_lab_heap_uaf`（自造，`../labs/lab_heap_uaf/`） | amd64 / No PIE，glibc 2.43 | `backdoor=0x401256` | `struct note {data, fn}`，data(0x18→0x20) 与 struct(0x20) 同 size class；两次 free 后 tcache 为 `S1,C,S0,A`，下一个 `add` 的 data 盖住旧 struct → `fn=backdoor` |
+
+> 本模式第二道**真实题**原本想用 pwnable.tw `hacknote`，但那版二进制的 print 分支是
+> `fn(note)` 而不是 `fn(content)`（反汇编见 `../PATTERN_CLASSIFICATION.md` §5.7），
+> "改 `print_note_content` 为 `system`、content 放 `/bin/sh`" 的通用解法不成立，
+> 按 20 分钟规则降级，改由自造 lab 补位。
 
 ---
 

