@@ -190,6 +190,16 @@ if need labs/lab_canary_bruteforce/chal L5 '先 cd labs/lab_canary_bruteforce &&
   run_case L5 labs/lab_canary_bruteforce '__PWNED__' timeout 180 "$PY" exp.py
 fi
 
+# ---- labs 第三梯队（double_free / fmtstr_read）----
+if need labs/lab_double_free/chal L7 '先 cd labs/lab_double_free && make'; then
+  mk_flag labs/lab_double_free '__PWNED__{dfree_ok}'
+  run_case L7 labs/lab_double_free '__PWNED__' "$PY" exp.py
+fi
+if need labs/lab_fmtstr_read/chal L8 '先 cd labs/lab_fmtstr_read && make'; then
+  mk_flag labs/lab_fmtstr_read '__PWNED__{fmt_read_ok}'
+  run_case L8 labs/lab_fmtstr_read '__PWNED__' "$PY" exp.py
+fi
+
 echo "----------------------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ -n "$FAILED" ] && echo "失败题号:$FAILED（日志在 $OUT/）"

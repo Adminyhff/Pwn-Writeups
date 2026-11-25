@@ -124,6 +124,8 @@
 | L4 | `lab_tcache_poisoning`（自造） | tcache poisoning / safe-linking / 64 位（glibc 2.43） | `tcache_poisoning` | `free` 不清空 `notes[]` → `show` 读队尾 `next` 得 `chunk>>12`（safe-linking key）→ `edit` 改队尾 `next = fh ^ key` → 3 次 `add` 让 `malloc` 落到 `.bss` 的 `fh`，写入 `backdoor` → `trigger` | N/A（堆） | `fh=0x4040a0`(16 对齐)、`backdoor=0x401296`、0x50 chunk、`__free_hook` 已不存在 |
 | L5 | `lab_canary_bruteforce`（自造） | canary 逐字节爆破 + ret2win / 64 位（fork server） | `canary_bruteforce` | 程序自带 `fork()` 循环（每次连接同 canary）；`read(0, buf, 0x100)` 溢出 `buf[0x40]`；LSB `\x00` 已知，其余 7 字节各试 ≤256 次，判据是子进程是否打印 `SURVIVED` | **0x48**（RIP 0x58） | `win=0x401256`、`ret` 垫片解决 16 字节对齐、单次约 900 fork ≈ 20 s |
 | L6 | `lab_heap_uaf`（自造） | 函数指针 UAF / 64 位（glibc 2.43） | `heap_uaf` | `struct note {data, fn}`，`free` 只释放不清空；data(0x18→0x20 chunk) 与 struct(0x20 chunk) 同 size class，两次 free 后 tcache 为 `S1,C,S0,A`，下一个 `add` 的 data 正好盖住旧 `struct note` → 改 `fn=backdoor` → `show(stale)` | N/A（堆） | `backdoor=0x401256`、tcache LIFO 顺序 `S1,C,S0,A`、`read_int` 必须逐字节读 |
+| L7 | `lab_double_free`（自造） | tcache double free / 绕过 2.29+ key 检测 / 64 位（glibc 2.43） | `double_free` | `secure_free()` 在 `free` 前 `memset(p,0,n)` 把 `tcache_entry.key` 抹掉 → `del(0);del(1);del(0)` 三次都过检测，tcache 成环 `c0→c1→c0`；`show` 读已释放 chunk 得 `c0>>12`（safe-linking key）；第一次取 c0 时改写其 `next` → 第 4 次 `malloc` 落 `.bss` 的 `handlers[]` → `trigger` | N/A（堆） | `handlers=0x4041a0`(16 对齐)、`win=0x4012df`、不 memset 必 `free(): double free detected in tcache 2` |
+| L8 | `lab_fmtstr_read`（自造） | 格式化字符串**只读** / 64 位（glibc 2.43） | `format_string_read` | 唯一漏洞 `printf(buf)`，无 `%n`：`MARKMARK`+`%p` 扫栈得 canary / libc 指针并定位 `k=8` → `%{k+2}$s` 读 `puts@got`（页对齐校验得 libc base）→ 同法读 `.bss` 的 `secret[]` 拿 flag；协议是 `u32 长度 + 定长 payload`（二进制安全） | 0（无栈溢出；canary 只是素材） | `secret=0x404080`、`puts@got=0x404000`、目标地址必须放格式串**后面**（否则 `0x00` 截断） |
 | 31 | `ROP Emporium write4` | 任意地址写 → 自造 `"flag.txt"` / 64 位 No PIE | `rop_write_memory` | `mov qword ptr [r14], r15 ; ret` 把 8 字节字符串写进 `.data`；`print_file@plt` 的参数是字符串地址 | **0x28**（`pwnme` 的 `rbp-0x20`，`read` 上限 0x200） | `pop r14;pop r15;ret=0x400690`、`mov [r14],r15;ret=0x400628`、`pop rdi;ret=0x400693`、`print_file@plt=0x400510`、`.data=0x601028` |
 | 32 | `ROP Emporium badchars` | 坏字符过滤 → 编码规避 / 64 位 No PIE | `badchars_encoding` | 坏字符 `x g a .`：`"flag.txt"` 先 `^2` 成 `"dnce,vzv"` 写入 `.data`，再 8 次 `xor byte ptr [r15], r14b` 原地解码；解码地址从 `0x601030` 起（`0x60102e` 会撞 `.`） | **0x28**（`rbp-0x20`，payload 368 B / 上限 512 B） | `pop r12..r15=0x40069c`、`mov [r13],r12=0x400634`、`pop r14;pop r15=0x4006a0`、`xor [r15],r14b=0x400628`、`pop rdi=0x4006a3`、`print_file@plt=0x400510` |
 | 33 | `ROP Emporium callme` | 链式多函数调用 / 64 位 No PIE | `ret2csu` | 依次调用 `callme_one/two/three(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d)`，三个函数都返回后才解密 `encrypted_flag.dat` | **0x28**（`rbp-0x20`，链 160 B / 上限 512 B） | `pop rdi;pop rsi;pop rdx=0x40093c`、`callme_one@plt=0x400720`、`callme_two@plt=0x400740`、`callme_three@plt=0x4006f0` |
@@ -1333,6 +1335,71 @@ show: notes[i]->fn(notes[i]->data)                   ← 调 stale 函数指针
 
 实测与文档：`labs/lab_heap_uaf/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
 
+### 3.L7 `lab_double_free` → `double_free`（自造实验）
+
+为什么造这个 lab：`heap_uaf` / `tcache_poisoning` 已经覆盖了“重占旧对象”和“UAF 改 next”，
+但**double free** 本身没被单独练过；而在 glibc 2.29+ 上它已经不能“朴素地”做
+（`tcache_entry.key` 检测会直接 abort）。本 lab 把“怎么让它重新可行”做成最小闭环。
+
+程序逻辑（`labs/lab_double_free/src/chal.c`）：
+
+```text
+add : p = malloc(size); read(p, size); slots[i]=p; sizes[i]=size;
+del : secure_free(slots[i], sizes[i]);      /* memset(p,0,n) → free(p) */
+      /* 不清空 slots[i]/sizes[i] */
+show: write(1, slots[i], sizes[i]);
+trig: handlers[i]("triggered");             /* .bss 函数指针表，16 字节对齐 */
+```
+
+判定依据：
+
+- `secure_free()` 的 `memset` 把 `next`/`key` 一起清零 → `tcache_put()` 里的
+  `if (e->key == tcache)` 分支不成立，`del(0);del(1);del(0)` 全部通过；
+- 三次 free 后 tcache 是 `c0 → c1 → c0`（环），`add` 三次分别拿 `c0`、`c1`、`c0`；
+- 第一次取 `c0` 时写下的前 8 字节，正是第三次取 `c0` 时被当作 `next` 读出的值
+  → 改成 `handlers ^ (c0>>12)`，第 4 次 `malloc` 就落到 `&handlers`；
+- `handlers[]` 16 字节对齐（过 `aligned_OK`），后面还有 7 个指针（容纳 `tcache_get` 回写的 `key=0`）。
+
+坑点（实测）：
+
+- 去掉 `memset` 后立即复现 `free(): double free detected in tcache 2`（`SIGABRT`）；
+- 目标不对齐 → `malloc(): unaligned tcache chunk detected`；目标后 8 字节不可写 → `SIGSEGV`；
+- safe-linking key 只在“bin 里只剩一个 chunk”时可读（`next = 0 ^ (c0>>12)`）；
+- 第 4 次 `malloc` 后 tcache count 变 `SIZE_MAX`，本 lab 到此为止，不再分配。
+
+实测与文档：`labs/lab_double_free/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
+### 3.L8 `lab_fmtstr_read` → `format_string_read`（自造实验）
+
+为什么造这个 lab：仓库里唯一的 fmtstr 题是 `08_fifth_space_2019_pwn5`（`%n` 写全局变量），
+**“只读”那一半**（`%p` 扫栈 + `%N$s` 任意读）没有独立靶子；而真实题里泄漏阶段
+几乎都是先做这一步。本 lab 把它做成终点明确的闭环：flag 只在 `.bss` 里，程序从不打印。
+
+程序逻辑（`labs/lab_fmtstr_read/src/chal.c`）：
+
+```text
+load_secret(): fread(flag.txt → secret[0x80])        /* .bss，不打印 */
+loop: read_n(&len,4); read_n(buf,len); buf[len]=0;
+      printf("echo: "); printf(buf); printf("\n---\n");
+```
+
+判定依据：
+
+- `MARKMARK` + `.%p`×0x30 → 输出里找到 `0x4b52414d4b52414d` 的第 `k` 个位置（实测 `k=8`）；
+- `%{k+2}$s` + `p64(puts@got)` → 6 字节 libc 指针，减去本机 libc 的 `puts` 偏移
+  得页对齐的 libc base（校验失败就说明错位）；
+- `%{k+2}$s` + `p64(secret)` → 直接读出 `__PWNED__{fmt_read_ok}`。
+
+坑点（实测）：
+
+- 缓冲区写成 `static` 会跑到 `.bss`，`%p` 扫栈就找不到它（必须是栈上局部变量 + 16 字节对齐）；
+- 目标地址必须放在格式串**后面**：`printf(buf)` 是 C 字符串，`p64(addr)` 里的 `0x00`
+  会把格式串截断，后面的 `%s` 不会执行；
+- 本机 libc 不一定映射在 `0x7f..`（实测 `0x71c9…`），判定用“页对齐 + 本机 libc 偏移”而不是前缀；
+- `%s` 读 GOT 是二进制输出，可能含 `0x0a`，所以程序用固定 `"\n---\n"` 分隔、EXP 用 `recvuntil`。
+
+实测与文档：`labs/lab_fmtstr_read/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
+
 ### 3.31 `write4` → `rop_write_memory`（任意地址写 → 自造字符串）
 
 题目形态：64 位、No PIE、NX、无 canary、Partial RELRO；`pwnme` / `print_file`
@@ -1558,6 +1625,8 @@ stosb                      # 写进 .bss，rdi++
 | （无原始附件，自造） | `labs/lab_tcache_poisoning/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L4，目标 `.bss` 函数指针，glibc 2.43） |
 | （无原始附件，自造） | `labs/lab_canary_bruteforce/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L5，程序自带 fork server） |
 | （无原始附件，自造） | `labs/lab_heap_uaf/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L6，函数指针 UAF） |
+| （无原始附件，自造） | `labs/lab_double_free/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L7，tcache double free，`secure_free` 清 key，glibc 2.43） |
+| （无原始附件，自造） | `labs/lab_fmtstr_read/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L8，fmtstr 只读：`%p` 扫栈 + `%N$s` 读 `secret[]`） |
 | ROP Emporium `write4`（外部下载，`_vendor/ropemporium/write4.zip`） | `rop_write_memory/31_ropemporium_write4_*`、`rop_write_memory/write4`、`rop_write_memory/libwrite4.so`、`rop_write_memory/flag.txt` |
 | ROP Emporium `badchars`（外部下载，`_vendor/ropemporium/badchars.zip`） | `badchars_encoding/32_ropemporium_badchars_*`、`badchars_encoding/badchars`、`badchars_encoding/libbadchars.so`、`badchars_encoding/flag.txt` |
 
@@ -1784,4 +1853,33 @@ bash tools/verify_all.sh 33 34    # 期望 PASS=2 FAIL=0 SKIP=0
 
 附件备份：`_vendor/ropemporium/{callme,fluff}.zip`；callme 解出的 5 个文件在
 `ret2csu/callme_lab/`；逐文件 sha256 见 `_vendor/attach_manifest.md`。
+
+### 5.10 2026-11-25 新增自造靶场（`double_free` / `format_string_read`，已解决，非 pending）
+
+这两个模式此前都只有“半个”覆盖，且找不到合适的外部附件，所以按 §3.L1–§3.L6 的同一套
+做法各造一个最小靶子（确定性、无外部依赖、`make` 一条命令重建）：
+
+1. **`L7_lab_double_free`**：`heap_uaf`（L6）解决“重占旧对象”、`tcache_poisoning`（L4）
+   解决“UAF 改 next”，但 **double free 本身**没有靶子 —— 而 glibc 2.29+ 的
+   `tcache_entry.key` 检测让朴素 `free(a);free(b);free(a)` 直接 abort。lab 用两个现实 bug
+   （`free` 前 `memset` 清掉 key + del 不清空 slot）把它重新做成可行链路：tcache 成环
+   `c0→c1→c0` → 第一次取 c0 时改写 next → 第 4 次 `malloc` 落 `.bss` 的 `handlers[]`。
+   实测数据：`page key = 0x3e5a0`、`handlers=0x4041a0`、`win=0x4012df`、链长 6 次 add；
+   去掉 `memset` 时稳现 `free(): double free detected in tcache 2`。
+2. **`L8_lab_fmtstr_read`**：`08_fifth_space_2019_pwn5` 只覆盖 `%n` **写**；本 lab 补
+   **只读**那一半（`%p` 扫栈 + `%N$s` 任意读），终点是把只存在于 `.bss` 的 flag 读出来。
+   实测数据：`k=8`（`buf` 在参数表里的索引）、`puts@got=0x404000`、`secret=0x404080`、
+   libc 泄漏 `0x71c922c8e860` → base 页对齐 `0x71c922c00000`（`puts` off `0x8e860`）。
+
+复现：
+
+```bash
+cd '/home/yfhd5/Pwn_Writeups'
+source .venv/bin/activate
+bash tools/verify_all.sh L7 L8     # 期望 PASS=2 FAIL=0 SKIP=0
+python tools/repro_audit.py L7 L8  # 两题的编译/二进制/环境变量/文档块全部通过
+```
+
+附件备份：无（自造，源码在 `labs/lab_{double_free,fmtstr_read}/src/`，`chal` 由 `make` 生成）。
+
 

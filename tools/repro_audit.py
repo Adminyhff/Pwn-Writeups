@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """复现性静态审计（不执行 exploit）
 
-用途：一次性检查所有 `<模式>/<NN>_*_exp.py` 与 `labs/*/exp.py`（L1–L6）是否“随时可复现”：
+用途：一次性检查所有 `<模式>/<NN>_*_exp.py` 与 `labs/*/exp.py`（L1–L8）是否“随时可复现”：
   1. 脚本能否通过语法编译（compile，不落 __pycache__）
   2. 脚本引用的题目二进制是否就在同目录
   3. 脚本读取的环境变量 / 二进制名是否写进了对应 `*_speedrun.md` / `*_writeup.md`
@@ -36,6 +36,8 @@ LAB_IDS = {
     "lab_tcache_poisoning": "L4",
     "lab_canary_bruteforce": "L5",
     "lab_heap_uaf": "L6",
+    "lab_double_free": "L7",
+    "lab_fmtstr_read": "L8",
 }
 
 
