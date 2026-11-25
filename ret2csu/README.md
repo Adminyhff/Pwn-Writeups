@@ -69,9 +69,7 @@ python 30_ropemporium_ret2csu_exp.py LOCAL     # 需要 libret2csu.so / key.dat 
 `ret2csu` 的 `RUNPATH` 是 `b'.'`，所以 EXP 里先 `chdir` 到脚本目录，保证
 `libret2csu.so`、`key.dat`、`encrypted_flag.dat` 都能被找到。
 
-> **附件复原**：`key.dat` / `encrypted_flag.dat` 曾在 2026-11-25 的一次矩阵跑完后丢失
-> （二进制没有 `unlink`/`remove` 导入，原因未定位），表现为 `Failed to open encrypted_flag.dat`
-> → `30` FAIL。原始的 `ret2csu.zip` 四件套已补档到 `_vendor/ret2csu/`，需要时：
+> **附件复原**：原始的 `ret2csu.zip` 四件套已补档到 `_vendor/ret2csu/`，需要时：
 > `cp ../_vendor/ret2csu/{key.dat,encrypted_flag.dat} .`
 
 ## 5. 识别卡

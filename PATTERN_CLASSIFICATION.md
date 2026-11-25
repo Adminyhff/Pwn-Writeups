@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按十七类利用原语（exploit primitive）划分：
+本仓库目前按十九类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -28,6 +28,8 @@
 | `canary_bruteforce` | canary 逐字节爆破 | 有 canary + 溢出长度足够 + 每次连接重启（fork server）→ 逐字节试错，判据是进程是否正常返回 |
 | `heap_exploitation` | 堆布局 / 分配器元数据 | 利用堆溢出、fastbin/unsorted bin、对象指针或分配器 hook 达成任意写 / 控制流 |
 | `fsop` | 伪造 `_IO_FILE` / vtable | 可控 `FILE *`（或 `_IO_list_all`）+ 能把二进制写进已知地址 → 伪造 `_IO_FILE`，借 `fclose` / `exit` 走到 libc 的 `_IO_str_finish` 等槽位 |
+| `rop_write_memory` | 任意地址写 → 自造字符串 | 目标函数要一个**内存里不存在**的字符串（`print_file("flag.txt")`、`system("/bin/sh")`），但有 `mov [reg_a], reg_b ; ret` 之类写原语 → 写进 `.data`/`.bss`，再 `pop rdi` 传地址 |
+| `badchars_encoding` | 输入被字符过滤 → 编码规避 | `pwnme` 把输入逐字节与坏字符表比对（命中就改成 `0xeb`/拒绝），而所需字符串或地址命中 → 写密文 + `xor/add/sub byte ptr [reg], regb` 原地解码 |
 
 判定顺序：
 
@@ -62,6 +64,12 @@
    ├─ free 后指针仍被引用，可重占旧对象改函数指针 → heap_uaf
    ├─ 已释放 chunk 的 `next` 可控（UAF / double free）→ tcache_poisoning
    └─ 需要操纵堆布局 / 分配器元数据 / 相邻对象指针 → heap_exploitation
+12. 目标函数要一个字符串指针，而二进制/内存里没有这个字符串（`print_file("flag.txt")`、
+    `system("/bin/sh")`）？
+    └─ 是 → rop_write_memory（`mov [reg_a], reg_b; ret` 写 `.data`/`.bss`，再 `pop rdi` 传地址）
+13. 输入会被"逐字节 vs 坏字符表"过滤（命中改成 `0xeb` / 拒绝）？
+    └─ 是 → badchars_encoding（写密文 + `xor/add/sub byte ptr [reg], regb` 原地解码；
+                             三个自检：密文、所有常量/gadget 地址、每个解码地址）
 ```
 
 > 第 0 条是"横切关注点"：seccomp 不改变落地原语，只把最终目标从 `getshell`
@@ -116,6 +124,8 @@
 | L4 | `lab_tcache_poisoning`（自造） | tcache poisoning / safe-linking / 64 位（glibc 2.43） | `tcache_poisoning` | `free` 不清空 `notes[]` → `show` 读队尾 `next` 得 `chunk>>12`（safe-linking key）→ `edit` 改队尾 `next = fh ^ key` → 3 次 `add` 让 `malloc` 落到 `.bss` 的 `fh`，写入 `backdoor` → `trigger` | N/A（堆） | `fh=0x4040a0`(16 对齐)、`backdoor=0x401296`、0x50 chunk、`__free_hook` 已不存在 |
 | L5 | `lab_canary_bruteforce`（自造） | canary 逐字节爆破 + ret2win / 64 位（fork server） | `canary_bruteforce` | 程序自带 `fork()` 循环（每次连接同 canary）；`read(0, buf, 0x100)` 溢出 `buf[0x40]`；LSB `\x00` 已知，其余 7 字节各试 ≤256 次，判据是子进程是否打印 `SURVIVED` | **0x48**（RIP 0x58） | `win=0x401256`、`ret` 垫片解决 16 字节对齐、单次约 900 fork ≈ 20 s |
 | L6 | `lab_heap_uaf`（自造） | 函数指针 UAF / 64 位（glibc 2.43） | `heap_uaf` | `struct note {data, fn}`，`free` 只释放不清空；data(0x18→0x20 chunk) 与 struct(0x20 chunk) 同 size class，两次 free 后 tcache 为 `S1,C,S0,A`，下一个 `add` 的 data 正好盖住旧 `struct note` → 改 `fn=backdoor` → `show(stale)` | N/A（堆） | `backdoor=0x401256`、tcache LIFO 顺序 `S1,C,S0,A`、`read_int` 必须逐字节读 |
+| 31 | `ROP Emporium write4` | 任意地址写 → 自造 `"flag.txt"` / 64 位 No PIE | `rop_write_memory` | `mov qword ptr [r14], r15 ; ret` 把 8 字节字符串写进 `.data`；`print_file@plt` 的参数是字符串地址 | **0x28**（`pwnme` 的 `rbp-0x20`，`read` 上限 0x200） | `pop r14;pop r15;ret=0x400690`、`mov [r14],r15;ret=0x400628`、`pop rdi;ret=0x400693`、`print_file@plt=0x400510`、`.data=0x601028` |
+| 32 | `ROP Emporium badchars` | 坏字符过滤 → 编码规避 / 64 位 No PIE | `badchars_encoding` | 坏字符 `x g a .`：`"flag.txt"` 先 `^2` 成 `"dnce,vzv"` 写入 `.data`，再 8 次 `xor byte ptr [r15], r14b` 原地解码；解码地址从 `0x601030` 起（`0x60102e` 会撞 `.`） | **0x28**（`rbp-0x20`，payload 368 B / 上限 512 B） | `pop r12..r15=0x40069c`、`mov [r13],r12=0x400634`、`pop r14;pop r15=0x4006a0`、`xor [r15],r14b=0x400628`、`pop rdi=0x4006a3`、`print_file@plt=0x400510` |
 
 ---
 
@@ -1321,6 +1331,95 @@ show: notes[i]->fn(notes[i]->data)                   ← 调 stale 函数指针
 
 实测与文档：`labs/lab_heap_uaf/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
 
+### 3.31 `write4` → `rop_write_memory`（任意地址写 → 自造字符串）
+
+题目形态：64 位、No PIE、NX、无 canary、Partial RELRO；`pwnme` / `print_file`
+都在配套 `libwrite4.so` 里（`RUNPATH=b'.'`，EXP 先 `chdir`）。
+`pwnme` 用 `read(0, rbp-0x20, 0x200)`，偏移 **0x28**；`print_file(char *name)`
+内部 `fopen(name,"r")`。
+
+判定依据（为什么不是 ret2csu / ret2libc）：
+
+- 二进制里**没有任何形如 `"flag.txt"` / `"/bin/sh"` 的字符串**（`strings` 可验），
+  而 `print_file` 要的是"指向文件名字符串的指针"；
+- 所以缺的是**数据**，不是寄存器 —— 这是 `rop_write_memory` 与 `ret2csu`（缺 `pop rdx`）、
+  `format_string_write`（用 `%n` 写数值）的分界线；
+- `usefulGadgets` 直接提供了写原语，不需要靠 `read` 二次写入。
+
+关键 gadget（`objdump -d -M intel write4`）：
+
+```text
+0000000000400628 <usefulGadgets>:
+  400628:  mov    QWORD PTR [r14],r15
+  40062b:  ret
+```
+
+| 地址 | gadget |
+| --- | --- |
+| `0x400690` | `pop r14 ; pop r15 ; ret` |
+| `0x400628` | `mov qword ptr [r14], r15 ; ret` |
+| `0x400693` | `pop rdi ; ret` |
+| `0x400510` | `print_file@plt` |
+
+段布局：`.data` = 0x601028–0x601037（16 B，初值全 0）、`.bss` = 0x601038–0x60103f（8 B）、
+heap 从 0x601040 起。`"flag.txt"`（8 B）写到 **0x601028**，紧随的 0x601030 天然是 `\0`。
+链长 96 B（40 + 24 + 8 + 16 + 8），远小于 `read` 上限 0x200。
+
+坑点（实测）：
+
+1. `ROP(e).find_gadget(['mov qword ptr [r14], r15', 'ret'])` 返回 **None** —— 该 gadget
+   在 `usefulGadgets` 函数体里、前后只有 `nop`，pwntools 的扫描漏检，必须手读反汇编。
+2. 官方 zip 解包后**没有 `+x` 位**，`process('./write4')` 直接报 `not marked as executable`。
+3. 别写到 `.bss`（0x601038）——`0x601040` 是 heap 起点，`fopen` 内部 `malloc` 会踩到。
+
+实测：`bash tools/verify_all.sh 31` → PASS，输出 `ROPE{a_placeholder_32byte_flag!}`。
+文档：`rop_write_memory/{31_ropemporium_write4_speedrun.md,README.md}`。
+
+### 3.32 `badchars` → `badchars_encoding`（坏字符过滤 → 编码规避）
+
+题目形态：与 31 同保护同布局，但 `pwnme` 在 `read` 之后多了一个过滤循环，
+把输入逐字节与 `badcharacters = "xga."` 比对，命中就把该字节改成 `0xeb`：
+
+```text
+ 9a8:  movzx ecx,BYTE PTR [rbp+rax*1-0x20]   ; buf[i]
+ 9b8:  movzx eax,BYTE PTR [rdx+rax*1]        ; badcharacters[j]
+ 9bc:  cmp   cl,al
+ 9be:  jne   9c9
+ 9c0:  mov   BYTE PTR [rbp+rax*1-0x20],0xeb  ; buf[i] = 0xeb
+```
+
+判定依据：所需字符串 `"flag.txt"` 含 `g` / `a` / `.`，直接写必然被改；而
+`usefulGadgets` 提供了 `xor/add/sub byte ptr [r15], r14b`，可以"写密文再原地解码"。
+它与 31 的区别不是"目标不同"，而是**输入空间被加了字符约束**，故单独成类。
+
+关键 gadget：
+
+| 地址 | gadget |
+| --- | --- |
+| `0x40069c` | `pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret` |
+| `0x400634` | `mov qword ptr [r13], r12 ; ret` |
+| `0x4006a0` | `pop r14 ; pop r15 ; ret` |
+| `0x400628` | `xor byte ptr [r15], r14b ; ret` |
+| `0x4006a3` | `pop rdi ; ret` |
+| `0x400510` | `print_file@plt` |
+
+编码：`"flag.txt" ^ 2 = "dnce,vzv"`（8 个字节全部避开 `x g a .`），写入 **0x601030**，
+再循环 8 次 `xor byte ptr [r15], r14b` 解密，最后 `print_file(0x601030)`。
+
+坑点（三个都必须做自检）：
+
+1. **目标地址撞坏字符**：从 0x601028 起解码时 `i=6` 会访问 **0x60102e**，低字节 `0x2e`
+   就是 `.` → 该 qword 被改成 `0xeb`，链断。改从 0x601030 起，
+   且紧随的 `.bss`（0x601038）为 0，天然是终止符。
+2. **长度预算**：解密循环若用 4-pop 版本，链长 568 B > `read` 上限 512 B；
+   用 2-pop 的 `pop r14; pop r15` 后是 368 B。
+3. **坏字符表要看真身**：`objdump -s -j .rodata libbadchars.so` 确认表是 4 字节
+   `78 67 61 2e`，不是"任意 `xga.` 子串"。
+
+EXP 里用 `assert not set(payload) & set(b"xga.")` 把三条自检合并成一句，
+换 key / 换地址后跑一次就能发现回归。实测：`bash tools/verify_all.sh 32` → PASS。
+文档：`badchars_encoding/{32_ropemporium_badchars_speedrun.md,README.md}`。
+
 ---
 
 ## 4. 仓库结构映射（重构前 → 重构后）
@@ -1360,6 +1459,8 @@ show: notes[i]->fn(notes[i]->data)                   ← 调 stale 函数指针
 | （无原始附件，自造） | `labs/lab_tcache_poisoning/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L4，目标 `.bss` 函数指针，glibc 2.43） |
 | （无原始附件，自造） | `labs/lab_canary_bruteforce/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L5，程序自带 fork server） |
 | （无原始附件，自造） | `labs/lab_heap_uaf/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L6，函数指针 UAF） |
+| ROP Emporium `write4`（外部下载，`_vendor/ropemporium/write4.zip`） | `rop_write_memory/31_ropemporium_write4_*`、`rop_write_memory/write4`、`rop_write_memory/libwrite4.so`、`rop_write_memory/flag.txt` |
+| ROP Emporium `badchars`（外部下载，`_vendor/ropemporium/badchars.zip`） | `badchars_encoding/32_ropemporium_badchars_*`、`badchars_encoding/badchars`、`badchars_encoding/libbadchars.so`、`badchars_encoding/flag.txt` |
 
 命名规则：
 
@@ -1528,4 +1629,31 @@ handler      @0x40116c：
 | --- | --- | --- | --- |
 | pwnable.tw `hacknote`（`/tmp/newchal/hacknote`，未入库） | i386、Partial RELRO、Canary、NX、No PIE；菜单 add/delete/print，`notelist[5]` 在 `0x804a050`，`note = {fn, content}` | 反汇编（`0x80488a5` 的 print 分支）确认调用约定是 **`fn(note)`**：`mov eax,[notelist[i]]` 取 `fn`，`push edx` 推的是 **note 指针本身**；随后 `print_note_content` 做的事是 `puts(note->content)`。所以把 `fn` 改成 `system` 只能得到 `system(note)`，命令串的第一个 4 字节必然是被覆盖上的 `&system`，拿不到 content 里的 `"/bin/sh"`。真正可行的路子需要 heap 泄漏后做 fastbin 攻击（2.24 无 tcache），链路明显超出 20 分钟预算 | **负结果：本二进制上“改 `print_note_content` 为 `system` + content 放 `/bin/sh`”的通用解法不成立**（那是 `fn(content)` 语义的版本）。按 20 分钟规则降级，改由 `labs/lab_heap_uaf`（§3.L6）补 `heap_uaf` 第二题 |
 | `heap_exploitation/card`（题 26） | 64 位、2.27；`cards[]` 上限 8 | 本机 `/tmp/libc227` 是**扁平布局**（`ld-2.27.so` + `libc-2.27.so`），原先 `verify_all.sh` 只探 `root/lib/x86_64-linux-gnu/`，所以一直是 SKIP。现已能启动（`--library-path /tmp/libc227`），但 stage-1 的挡板 `create(8)` 在该二进制上无效（索引上限 8）→ S7 直接并进 top，unsorted bin 泄漏拿不到 `main_arena` | **已知缺陷，保持 SKIP**：`verify_all.sh` 用 `CARD227_LEAK_OK=1` 显式开关控制；修好 stage-1 布局后再打开。详见 `heap_exploitation/26_card_speedrun.md` §9 |
+
+### 5.8 2026-11-25 新增入库（`write4` / `badchars`，已解决，非 pending）
+
+| 题号 | 来源 | 保护 / 形态 | 落地模式 | 结论 |
+| --- | --- | --- | --- | --- |
+| 31 | `https://ropemporium.com/binary/write4.zip`（zip sha256 `3925c857…`） | 64 位、No PIE、NX、无 canary、Partial RELRO；`pwnme`/`print_file` 在 `libwrite4.so`（`RUNPATH=b'.'`） | `rop_write_memory` | ✅ `mov [r14],r15` 写 `"flag.txt"` 到 `.data` 0x601028 → `print_file`，本地稳定出 `ROPE{...}` |
+| 32 | `https://ropemporium.com/binary/badchars.zip`（zip sha256 `f6e8d54c…`） | 64 位、No PIE、NX、无 canary、Partial RELRO；坏字符 `x g a .` | `badchars_encoding` | ✅ `"flag.txt"^2 = "dnce,vzv"` 写入 0x601030 + 8 次 `xor [r15],r14b` 解码，payload 368 B < 512 B 上限 |
+
+实测坑（两道题都必须记住的）：
+
+1. **官方 zip 解包后没有 `+x` 位**（`zipfile.extractall` 不保留权限），
+   `process('./write4')` 会报 `not marked as executable (+x)`，归档时 `chmod +x`。
+2. **badchars 的写目标不能是 `0x601028`**：逐字节解码访问 `DATA+6 = 0x60102e`，
+   低字节 `0x2e` 就是坏字符 `.`；改从 `0x601030` 起，紧随的 `.bss`（0x601038，初值 0）
+   正好是终止符。
+3. 两题的 `.data`（0x601028–0x601037）+ `.bss`（0x601038–0x60103f）合计只有 24 B，
+   `0x601040` 是 heap 起点（brk），写满 24 B 再让 `fopen` 内部 `malloc` 会踩坏 chunk header。
+
+复现：
+
+```bash
+cd '/home/yfhd5/Pwn Writeups'
+source .venv/bin/activate
+bash tools/verify_all.sh 31 32     # 期望 PASS=2 FAIL=0 SKIP=0
+```
+
+附件备份：`_vendor/ropemporium/{write4,badchars}.zip`；逐文件 sha256 见 `_vendor/attach_manifest.md`。
 

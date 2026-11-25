@@ -80,6 +80,11 @@ printf '__PWNED__{uaf_ok}\n' > flag.txt
 python exp.py                          # 期望输出 __PWNED__{uaf_ok}
 ```
 
+文件：`chal`（`make` 产物，ELF 64 位）+ `exp.py` + `src/chal.c`。
+EXP 默认 `process('./chal')`；想跑远程时用
+`socat TCP-LISTEN:10006,reuseaddr,fork EXEC:./chal` 起服务，再
+`HOST=127.0.0.1 PORT=10006 python exp.py`（两个环境变量都支持）。
+
 ## 6. 识别卡
 
 ```text

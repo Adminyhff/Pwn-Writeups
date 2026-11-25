@@ -65,6 +65,18 @@ Pwn Writeups/
 │   ├── libret2csu.so
 │   ├── key.dat
 │   └── encrypted_flag.dat
+├── rop_write_memory/                  # 任意地址写 -> 自己造 "flag.txt" 字符串
+│   ├── README.md
+│   ├── 31_ropemporium_write4_{speedrun,exp}.*
+│   ├── write4
+│   ├── libwrite4.so
+│   └── flag.txt
+├── badchars_encoding/                 # 坏字符过滤 -> 写密文 + 原地解码
+│   ├── README.md
+│   ├── 32_ropemporium_badchars_{speedrun,exp}.*
+│   ├── badchars
+│   ├── libbadchars.so
+│   └── flag.txt
 ├── sandbox_seccomp/                   # seccomp 沙箱 -> ORW
 │   ├── README.md
 │   ├── 23_pwnable_orw_{speedrun,exp}.*
@@ -139,7 +151,7 @@ Pwn Writeups/
 │   ├── 29_pwnable_tw_seethefile_{speedrun,exp}.*
 │   └── seethefile
 └── tools/                             # 仓库自检脚本（非题目）
-    ├── repro_audit.py                 # 01–30 复现性静态审计（见 README 文末）
+    ├── repro_audit.py                 # 01–32 + L1–L6 复现性静态审计（见 README 文末）
     ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
     └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
@@ -165,6 +177,8 @@ Pwn Writeups/
 | `canary_bruteforce` | 有 canary 且无泄漏点 + 每次连接重启（fork server）→ 逐字节试错 | `L5_lab_canary_bruteforce`（自造） |
 | `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card` |
 | `fsop` | 可控 `FILE *` / `_IO_list_all` → 伪造 `_IO_FILE` + vtable | `29_pwnable_tw_seethefile` |
+| `rop_write_memory` | 目标函数要一个**内存里不存在**的字符串，用 `mov [reg_a], reg_b; ret` 写进 `.data`/`.bss`，再 `pop rdi` 传地址 | `31_ropemporium_write4` |
+| `badchars_encoding` | 输入被逐字节过滤（坏字符 `x g a .`，命中改 `0xeb`），先写密文再用 `xor byte ptr [r15], r14b` 原地解码 | `32_ropemporium_badchars` |
 
 逐题的判定依据、偏移、目标地址与关键坑点见 [PATTERN_CLASSIFICATION.md](PATTERN_CLASSIFICATION.md)。
 
@@ -244,6 +258,14 @@ python 22_ropemporium_pivot_exp.py        # 当前目录需有 flag.txt
 cd ../ret2csu
 # 30 是 ROP Emporium ret2csu：缺 pop rdx，用 __libc_csu_init + frame_dummy 保 rdx
 python 30_ropemporium_ret2csu_exp.py LOCAL   # 目录内需有 libret2csu.so / key.dat / encrypted_flag.dat
+
+cd ../rop_write_memory
+# 31 用 mov [r14],r15 把 "flag.txt" 写进 .data，再 print_file(字符串地址)
+python 31_ropemporium_write4_exp.py LOCAL    # 目录内需有 libwrite4.so / flag.txt
+
+cd ../badchars_encoding
+# 32 坏字符 x/g/a/. -> "flag.txt"^2 = "dnce,vzv"，写完再 xor 解码
+python 32_ropemporium_badchars_exp.py LOCAL  # 目录内需有 libbadchars.so / flag.txt
 
 cd ../sandbox_seccomp
 # 23 是 seccomp ORW；现代内核需要先给 .bss 段加 PF_X
@@ -327,17 +349,18 @@ python exp.py
 
 ---
 
-## 复现自检（01–30，2026-11-24）
+## 复现自检（01–32 + L1–L6，2026-11-25）
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
 
-它检查五项，全部是“缺了就跑不起来”的硬条件：
+它覆盖 `*/*_exp.py`（题号 01–32）与 `labs/*/exp.py`（L1–L6；EXP 名统一是 `exp.py`，
+文档用同目录 `README.md`），检查五项，全部是“缺了就跑不起来”的硬条件：
 
-1. `*_exp.py` 能否 `compile()` 通过（不落 `__pycache__`）；
+1. `*_exp.py` / `labs/*/exp.py` 能否 `compile()` 通过（不落 `__pycache__`）；
 2. 脚本引用的题目二进制是否在**同目录**；
 3. 脚本读取的每个环境变量（`I386_LD` / `I386_LIBPATH` / `LIBC` / `LD_SO` / `LIBC_DIR` / `SSL` / `HOST` / `PORT`）
-   是否写进了对应的 `*_speedrun.md`；
+   是否写进了对应的 `*_speedrun.md`（labs 则查 `README.md`）；
 4. 文档是否含 ```` ```bash ```` 运行块、是否残留 `TODO` / `待补` / `???`；
 5. 标出“`HOST` 写死在脚本里”的题（CTF² 临时靶机，早已下线）。
 
@@ -346,7 +369,10 @@ cd '/home/yfhd5/Pwn Writeups' && source .venv/bin/activate
 python tools/repro_audit.py          # 文本表；有文档缺口时退出码 1
 python tools/repro_audit.py --md     # Markdown 表（本节的表就是它生成的）
 python tools/repro_audit.py 08 19    # 只审指定题号
+python tools/repro_audit.py 6        # 只审 lab L6（也接受 `L6` 写法）
 ```
+
+当前结果：**38 题（32 个编号题 + 6 个 lab），文档缺口 0**。
 
 ### 32 位题的公共前置（i386 loader）
 
@@ -403,10 +429,19 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 | 28 | `28_canary3_exp.py` | ./canary3 | LIBC（远程可选） | ✅ | 实跑 3/3 |
 | 29 | `29_pwnable_tw_seethefile_exp.py` | ./seethefile | HOST, I386_LD, I386_LIBPATH, LIBC, PORT, SSL | ✅ | 实跑 3/3（FSOP，i386 2.24） |
 | 30 | `30_ropemporium_ret2csu_exp.py` | ./ret2csu | HOST, PORT | ✅ | 实跑 1/1（ret2csu，输出 `ROPE{...}`） |
+| 31 | `31_ropemporium_write4_exp.py` | ./write4（+ `libwrite4.so`） | HOST, PORT | ✅ | 实跑 1/1（rop_write_memory，输出 `ROPE{...}`） |
+| 32 | `32_ropemporium_badchars_exp.py` | ./badchars（+ `libbadchars.so`） | HOST, PORT | ✅ | 实跑 1/1（badchars_encoding，输出 `ROPE{...}`） |
 
 审计结论（本次实际补齐的内容已写回各题文档）：
 
-- **30 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
+- **32 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
+- **2026-11-25 新增 2 个题型 / 2 个 case**（都是 ROP Emporium 官方附件，非自造）：
+  `31_ropemporium_write4`（`rop_write_memory`：`mov [r14],r15` 把 `"flag.txt"`
+  写进 `.data`）与 `32_ropemporium_badchars`（`badchars_encoding`：坏字符
+  `x g a .` 下写密文 + `xor byte ptr [r15], r14b` 原地解码）。
+  附件 zip 已备份到 `_vendor/ropemporium/`（`write4.zip` sha256 `3925c857…`、
+  `badchars.zip` sha256 `f6e8d54c…`），逐文件 sha256 见 `_vendor/attach_manifest.md`。
+  题型分类 **十七类 → 十九类**。
 - **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
   `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
   （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。
@@ -446,7 +481,7 @@ bash tools/verify_all.sh              # 全部
 bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/verify_all/<题号>.log）
 ```
 
-| 题 | 前置 | 判定字符串 | 2026-11-24 复跑结果 |
+| 题 | 前置 | 判定字符串 | 2026-11-25 复跑结果 |
 | --- | --- | --- | --- |
 | 05 | 目录内 `flag.txt`（脚本临时创建） | `GOT THE FLAG` | PASS |
 | 12 | 目录内 `flag.txt`（临时创建） | `GOT THE FLAG` | PASS |
@@ -458,13 +493,15 @@ bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/veri
 | 28 | `canary3` | `shell ok` | PASS |
 | 29 | `/tmp/libc224i32` 的 i386 2.24 loader + `../ret2libc/libc-2.24.so` | `shell ok` | PASS |
 | 30 | 同目录 `libret2csu.so` / `key.dat` / `encrypted_flag.dat` | `ROPE{` | PASS（本次新增） |
+| 31 | 同目录 `libwrite4.so` + `flag.txt`（官方 zip 自带，无需临时创建） | `ROPE{` | PASS（2026-11-25 新增） |
+| 32 | 同目录 `libbadchars.so` + `flag.txt`；坏字符自检 `assert` | `ROPE{` | PASS（2026-11-25 新增） |
 | L2 | 先 `make`（`as --32` + `ld -m elf_i386`，不需要 gcc-multilib） | `__PWNED__` | PASS |
 | L3 | 先 `make`（链到 `labs/lab_ret2dlresolve_i386/libc/` 的 2.24 i386） | `__PWNED__` | PASS |
 | L4 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（本次新增） |
 | L5 | 先 `make`；程序自带 fork server，逐字节爆破 ≈ 20 s（`timeout 180`） | `__PWNED__` | PASS（本次新增） |
 | L6 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（本次新增） |
 
-总计 **PASS=14 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
+总计 **PASS=16 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
 （`26_card` 仍是 SKIP：本机 2.27 是扁平布局，已能启动，但该二进制的 `cards[]` 上限为 8，
 `exp` 里 stage-1 的挡板 `create(8)` 不成立 → 需要重写 stage-1 布局；确认修好后用
 `CARD227_LEAK_OK=1 bash tools/verify_all.sh 26` 再跑。见 `PATTERN_CLASSIFICATION.md` §5.7。）

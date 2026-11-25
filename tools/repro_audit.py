@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """复现性静态审计（不执行 exploit）
 
-用途：一次性检查所有 `<模式>/<NN>_*_exp.py` 是否“随时可复现”：
+用途：一次性检查所有 `<模式>/<NN>_*_exp.py` 与 `labs/*/exp.py`（L1–L6）是否“随时可复现”：
   1. 脚本能否通过语法编译（compile，不落 __pycache__）
   2. 脚本引用的题目二进制是否就在同目录
   3. 脚本读取的环境变量 / 二进制名是否写进了对应 `*_speedrun.md` / `*_writeup.md`
@@ -27,12 +27,23 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLACEHOLDERS = ("TODO", "FIXME", "待补", "待定", "???")
 
+# labs/ 下的自造靶场没有题号，用 README 里约定的 L 编号（与 verify_all.sh 的 run_case 一致）。
+# 这些目录的 EXP 统一叫 exp.py，文档是 README.md，因此 audit() 需要允许覆盖。
+LAB_IDS = {
+    "lab_srop_baby": "L1",
+    "lab_ret2syscall_i386": "L2",
+    "lab_ret2dlresolve_i386": "L3",
+    "lab_tcache_poisoning": "L4",
+    "lab_canary_bruteforce": "L5",
+    "lab_heap_uaf": "L6",
+}
+
 
 def rel(path: str) -> str:
     return os.path.relpath(path, ROOT)
 
 
-def audit(exp: str) -> dict:
+def audit(exp: str, case_id: str = "", doc_override=None) -> dict:
     src = open(exp, encoding="utf-8", errors="replace").read()
     d = os.path.dirname(exp)
 
@@ -53,13 +64,15 @@ def audit(exp: str) -> dict:
     envs = sorted(envs)
 
     docs = [exp.replace("_exp.py", suffix) for suffix in ("_speedrun.md", "_writeup.md")]
+    if doc_override:
+        docs = list(doc_override)
     docs = [p for p in docs if os.path.exists(p)]
     text = "".join(open(p, encoding="utf-8", errors="replace").read() for p in docs)
 
     host = re.search(r"(?:HOST|host)\s*=\s*['\"]([a-z0-9.\-]+)['\"]", src)
 
     return dict(
-        id=(re.search(r"/(\d\d)_", exp) or [None, "??"])[1],
+        id=case_id or (re.search(r"/(\d\d)_", exp) or [None, "??"])[1],
         exp=rel(exp),
         compiles=compiles,
         compile_err=compile_err,
@@ -78,13 +91,22 @@ def audit(exp: str) -> dict:
 
 def main() -> int:
     only = {a.lstrip("0") or "0" for a in sys.argv[1:] if not a.startswith("-")}
+    only |= {"L" + x for x in only if x.isdigit()}   # 允许用 6 / L6 两种写法选 lab
     md = "--md" in sys.argv
     rows = []
+    cases = []          # (exp, case_id, doc_override)
     for exp in sorted(glob.glob(os.path.join(ROOT, "*", "*_exp.py"))):
-        cid = (re.search(r"/(\d\d)_", exp) or [None, "??"])[1]
+        cases.append((exp, "", None))
+    for exp in sorted(glob.glob(os.path.join(ROOT, "labs", "*", "exp.py"))):
+        lab = os.path.basename(os.path.dirname(exp))
+        cases.append((exp, LAB_IDS.get(lab, "??"),
+                      [os.path.join(os.path.dirname(exp), "README.md")]))
+    for exp, cid, doc_override in cases:
+        if not cid:
+            cid = (re.search(r"/(\d\d)_", exp) or [None, "??"])[1]
         if only and cid.lstrip("0") not in only:
             continue
-        rows.append(audit(exp))
+        rows.append(audit(exp, cid, doc_override))
 
     if md:
         print("| 题 | 脚本 | 二进制（同目录） | 依赖环境变量 | 文档补齐 | 备注 |")

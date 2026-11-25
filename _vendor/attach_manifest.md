@@ -60,3 +60,25 @@
   `Failed to open encrypted_flag.dat`。把它们从 zip 复原后 `cmp` 确认 `ret2csu` 与仓库内二进制完全一致（sha256 `8891368e…`），`libret2csu.so` 也一致（`c8916f77…`）。
   以后再丢就从这里 `cp` 回去：
   `cp _vendor/ret2csu/{key.dat,encrypted_flag.dat} ret2csu/`。
+- **`_vendor/ropemporium/`（2026-11-25 新增）**：ROP Emporium 的 `write4.zip` /
+  `badchars.zip` 原始压缩包（`https://ropemporium.com/binary/<name>.zip`，下载时均为 HTTP 200）。
+  两个 zip 各含 3 个文件：主程序、`lib<solver>.so`、`flag.txt`（33 字节，
+  内容 `ROPE{a_placeholder_32byte_flag!}` + `\n`，两题完全相同）。
+  注意 `python -c "zipfile.ZipFile(...).extractall()"` **不保留可执行位**，
+  解出后必须 `chmod +x`，否则 `process('./write4')` 报
+  `not marked as executable (+x)`。
+
+  | 文件 | sha256 |
+  | --- | --- |
+  | `_vendor/ropemporium/write4.zip` | `3925c857cf71cbd218604f733faa7beafe520459bdfdee46d02c3c9033ad042f` |
+  | `_vendor/ropemporium/badchars.zip` | `f6e8d54c004a5ad658bbd85c55777f82de897f863313d8a1c31d8417ce114425` |
+  | `rop_write_memory/write4`（解出） | `15c9fc1d4dff1874633caebd212d4990243b072f9352baa23daf07f39a93f8cd` |
+  | `rop_write_memory/libwrite4.so` | `9e3233c955c3abedb9a2940e5357b9eade80800d6864cbd1d8dbade038166dcc` |
+  | `badchars_encoding/badchars`（解出） | `5308289f3937a34e4c5eac818e394217f5f22c6f21fbb0f6dc6b8e3f771deb8b` |
+  | `badchars_encoding/libbadchars.so` | `8765298372d1752663010530db5d6c744e746c0a0cf7d978abb28ab0a3b28f78` |
+  | 两个目录的 `flag.txt`（同一份） | `04ccfeba117d050cc8d4d86db473d042295896cd808e54d7c12833d6327f104f` |
+
+  两题都是 No PIE + `RUNPATH=b'.'`：EXP 里先 `chdir` 到脚本目录，否则 loader 找不到
+  `libwrite4.so` / `libbadchars.so`；`print_file` 也从 cwd 打开 `flag.txt`。
+  归档副本：`rop_write_memory/{write4,libwrite4.so,flag.txt}`、
+  `badchars_encoding/{badchars,libbadchars.so,flag.txt}`（ELF 为 deny-all 白名单外，需 `git add -f`）。

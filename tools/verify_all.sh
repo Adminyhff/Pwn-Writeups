@@ -151,6 +151,16 @@ fi
 # 主程序 No PIE，ret2win 在 libret2csu.so 里（RUNPATH=b'.'，EXP 自己 chdir）
 run_case 30 ret2csu 'ROPE\{' "$PY" 30_ropemporium_ret2csu_exp.py LOCAL
 
+# ---- rop_write_memory / badchars_encoding ----
+# 两题都自带 flag.txt（官方 zip 附件），print_file 直接读它，不需要 mk_flag。
+if need rop_write_memory/write4 31 '缺少题目二进制（见 _vendor/ropemporium/）'; then
+  run_case 31 rop_write_memory 'ROPE\{' "$PY" 31_ropemporium_write4_exp.py LOCAL
+fi
+if need badchars_encoding/badchars 32 '缺少题目二进制（见 _vendor/ropemporium/）'; then
+  run_case 32 badchars_encoding 'ROPE\{' "$PY" 32_ropemporium_badchars_exp.py LOCAL
+fi
+
+
 # ---- labs（自造靶场：先 make）----
 if need labs/lab_ret2syscall_i386/chal L2 '先 cd labs/lab_ret2syscall_i386 && make'; then
   run_case L2 labs/lab_ret2syscall_i386 '__PWNED__' "$PY" exp.py
