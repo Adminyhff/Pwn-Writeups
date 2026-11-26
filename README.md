@@ -161,7 +161,7 @@ Pwn_Writeups/
     ├── README.md
     ├── 15_babyheap_Octf_2017_{speedrun,exp}.*
     ├── 16_babyfengshui_33c3_2016_{speedrun,exp}.*
-    ├── 26_card_{speedrun,exp}.*
+    ├── 26_card_{speedrun,exp}(pending).*
     ├── babyheap_Octf_2017
     ├── babyfengshui_33c3_2016
     └── card
@@ -196,7 +196,7 @@ Pwn_Writeups/
 | `canary_bruteforce` | 有 canary 且无泄漏点 + 每次连接重启（fork server）→ 逐字节试错 | `L5_lab_canary_bruteforce`（自造） |
 | `double_free` | free 前 memset/清字段把 `tcache_entry.key` 抹掉 → 同一 chunk 连 free 两次 → tcache 成环 → 改 `next` 落 `.bss` | `L7_lab_double_free`（自造） |
 | `format_string_read` | 只有 `printf(buf)` 的**读**能力：`%p` 扫栈（canary / libc）、`%N$s` 读 GOT 与任意地址 | `L8_lab_fmtstr_read`（自造） |
-| `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card` |
+| `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card`（PENDING） |
 | `fsop` | 可控 `FILE *` / `_IO_list_all` → 伪造 `_IO_FILE` + vtable | `29_pwnable_tw_seethefile` |
 | `rop_write_memory` | 目标函数要一个**内存里不存在**的字符串，用 `mov [reg_a], reg_b; ret` 写进 `.data`/`.bss`，再 `pop rdi` 传地址 | `31_ropemporium_write4` |
 | `badchars_encoding` | 输入被逐字节过滤（坏字符 `x g a .`，命中改 `0xeb`），先写密文再用 `xor byte ptr [r15], r14b` 原地解码；34 是同一族的另一面：没有写内存原语，用 `bextr` 算地址 + `xlatb` 取字符 + `stosb` 落盘 | `32_ropemporium_badchars`、`34_ropemporium_fluff` |
@@ -320,10 +320,8 @@ I386_LIBPATH=/tmp/libc32/root/usr/lib32 \
 python 16_babyfengshui_33c3_2016_exp.py LOCAL
 
 # 26 是 card：libc 2.27（附件 libc.so）+ 1 字节堆溢出 -> tcache 毒化 __free_hook
-LD_SO=/tmp/libc227/root/lib/x86_64-linux-gnu/ld-2.27.so \
-LIBC_DIR=/tmp/libc227/root/lib/x86_64-linux-gnu \
-LIBC=/tmp/libc227/root/lib/x86_64-linux-gnu/libc-2.27.so \
-python 26_card_exp.py LOCAL
+# 2026-11-26 主动放弃（PENDING）：hook 写入后不触发，verify_all 固定 SKIP；
+# 卡点与重开步骤见 heap_exploitation/26_card_speedrun(pending).md §10
 
 cd ../fsop
 # 29 是 seethefile：全局 FILE *fp 被 %s 溢出 -> 伪造 _IO_FILE -> _IO_str_finish 打 system
@@ -410,7 +408,8 @@ python tools/repro_audit.py 6        # 只审 lab L6（也接受 `L6` 写法）
 python tools/repro_audit.py L7 L8    # 只审 lab L7 / L8
 ```
 
-当前结果：**42 题（34 个编号题 + 8 个 lab），文档缺口 0**。
+当前结果：**41 题（33 个编号题 + 8 个 lab），文档缺口 0**
+（26_card 已改名 `(pending)` 归档、不再计入；`verify_all.sh` 里仍保留 26 的 SKIP 占位）。
 
 ### 32 位题的公共前置（i386 loader）
 
@@ -462,7 +461,7 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 | 23 | `23_pwnable_orw_exp.py` | ./orw, ./orw_local_exec | I386_LD, I386_LIBPATH | ✅ | 本次补复跑方法 |
 | 24 | `24_easyroptocol_exp.py` | —（用同目录 libc-2.31.so） | — | ✅ | 实跑通过 |
 | 25 | `25_rec_33c3_2016_exp.py` | ./rec_33c3_2016 | HOST, I386_LD, I386_LIBPATH, LIBC, PORT, SSL | ✅ | 另有 §8 从零清单 |
-| 26 | `26_card_exp.py` | ./card | HOST, LIBC, LIBC_DIR, LD_SO, PORT, SSL | ✅ | 实跑 3/3（libc 2.27） |
+| 26 | `26_card_exp(pending).py` | ./card | —（不再实跑） | ⏸ PENDING | 2026-11-26 主动放弃：`__free_hook` 写入后不触发，`verify_all` 固定 SKIP |
 | 27 | `27_jarvisoj_http_exp.py` | ./jarvisoj_http | HOST, PORT, USE_UNIX, SHIM, HTTP_UNIX, SHIM_LOG | ✅ | 实跑 3/3（`USE_UNIX=1`） |
 | 28 | `28_canary3_exp.py` | ./canary3 | LIBC（远程可选） | ✅ | 实跑 3/3 |
 | 29 | `29_pwnable_tw_seethefile_exp.py` | ./seethefile | HOST, I386_LD, I386_LIBPATH, LIBC, PORT, SSL | ✅ | 实跑 3/3（FSOP，i386 2.24） |
@@ -495,10 +494,10 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
   - `23` 的 loader 解析：原脚本写死 `/tmp/libc32/...`，本机不存在时直接
     `FileNotFoundError`；`verify_all.sh` 现在按 `/tmp/libc32*` → `/tmp/libc224i32`
     顺序自动探测 i386 loader 并用 `I386_LD/I386_LIBPATH` 启动。
-- `26` 仍 **SKIP**：本机没有 `/tmp/libc227` 里的 `ld-2.27.so`（仓库只归档了
-  `heap_exploitation/libc-2.27.so`）。补法是按 `heap_exploitation/26_card_speedrun.md` §6
-  装一个 2.27 的 loader 后再跑。
-- 新归档的 26 / 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）；
+- `26` 已 **PENDING（2026-11-26 主动放弃）**：2.27 的 loader/libc 本机已备好
+  （`/tmp/libc227`），二进制能启动、stage-1 的 libc 泄漏也已跑通，但 `__free_hook` 写入后
+  `free()` 不触发 hook；不再实跑，见 `heap_exploitation/26_card_speedrun(pending).md` §10。
+- 新归档的 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）；
   **29**（2026-11-24 新增，FSOP 模式）同样实跑 3/3。
 - **01–04** 的 EXP 只有远程分支且 `HOST` 已下线：文档已加提示，本地按
   `process('./<bin>')` 复跑（`test_your_nc` / `rip` / `warmup_csaw_2016` / `ciscn_2019_n_1` 都在库）。
@@ -547,9 +546,11 @@ bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/veri
 | L8 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-25 新增） |
 
 总计 **PASS=20 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
-（`26_card` 仍是 SKIP：本机 2.27 是扁平布局，已能启动，但该二进制的 `cards[]` 上限为 8，
-`exp` 里 stage-1 的挡板 `create(8)` 不成立 → 需要重写 stage-1 布局；确认修好后用
-`CARD227_LEAK_OK=1 bash tools/verify_all.sh 26` 再跑。见 `PATTERN_CLASSIFICATION.md` §5.7。）
+（SKIP 的那 1 题是 `26_card`：**2026-11-26 主动放弃（PENDING）**。stage-1 的 libc 泄漏已跑通
+并与 `/proc/<pid>/maps` 交叉验证一致，但 `__free_hook` 写入后 `free()` 不触发 hook
+（`system` / `_exit` / `0xdeadbeef` 三组对照都不崩不退）。exp 与文档已改名加 `(pending)` 后缀，
+`verify_all.sh 26` 固定 SKIP、旧的 `CARD227_LEAK_OK` 开关已删除。
+结论与重开步骤见 `heap_exploitation/26_card_speedrun(pending).md` §10、`PATTERN_CLASSIFICATION.md` §5.7。）
 
 > **`LD_PRELOAD` 与空格**：`LD_PRELOAD` 按空格切分库列表，路径带空格就会被拆成两个库名并静默跳过
 > （本仓库 2026-11-25 前的路径 `Pwn Writeups` 正是这种）。27 的兜底方案因此仍要求 `SHIM` 用

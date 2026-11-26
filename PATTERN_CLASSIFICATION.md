@@ -907,7 +907,7 @@ stage2: 选项 2 删 slot3（chunk4 与 top 相邻，free 后并进 top）
 2.24-3ubuntu2.2（`ret2libc/libc-2.24.so`，与 old-releases 的
 `libc6_2.24-3ubuntu2.2_i386.deb` 解包结果 md5 一致）。
 
-### 3.26 `card` → `heap_exploitation`（tcache 1 字节溢出 + overlap）
+### 3.26 `card` → `heap_exploitation`（tcache 1 字节溢出 + overlap）【PENDING 2026-11-26】
 
 ```text
 64 位 / PIE / Full RELRO / Canary / NX；libc 2.27（附件 libc.so）
@@ -926,7 +926,10 @@ stage2: 选项 2 删 slot3（chunk4 与 top 相邻，free 后并进 top）
 5. 最后 `malloc("/bin/sh")` + `free` 触发 `system("/bin/sh")`。
 
 关键值：`__free_hook=libc+0x3ED8E8`、`system=libc+0x4F440`、`main_arena+0x60=__malloc_hook+0x70`。
-文档：`heap_exploitation/26_card_speedrun.md`；EXP：`26_card_exp.py`（本地需 `LD_SO` / `LIBC_DIR` 指 2.27）。
+文档：`heap_exploitation/26_card_speedrun(pending).md`；EXP：`26_card_exp(pending).py`。
+**2026-11-26 状态：PENDING（主动放弃）** —— 上面 1–3 步实测成立（stage-1 的 leak 与
+`/proc/<pid>/maps` 的 libc base 完全一致），第 4–5 步的 `__free_hook` 写入读回一致但 `free()`
+不触发 hook（`system` / `_exit` / `0xdeadbeef` 三组对照都不崩不退）。卡点与重开步骤见该文档 §10。
 
 ### 3.27 `jarvisoj_http` → `ret2text`（逐字节读请求 + CSU ROP）
 
@@ -1778,7 +1781,8 @@ handler      @0x40116c：
 | --- | --- | --- | --- |
 | `publibc/bf` | PIE、Full RELRO、Canary；导入 `system` | 14KB，`scanf`/`getchar`/`putchar`/`malloc` + `system` —— 典型 brainfuck 解释器，越界指针对 tape 任意读写；Full RELRO 不能改 GOT | 需 hook / FSOP，30 分钟以上 |
 
-> `card/pwn` 已于 2026-11-23 解决（`heap_exploitation/26_card_*`，见 §3.26），从本表移出。
+> `card/pwn` 于 2026-11-23 尝试入库（`heap_exploitation/26_card_*`，见 §3.26），2026-11-26
+> **主动放弃并归档为 PENDING**（`__free_hook` 未打通），不计入可复现矩阵。
 
 > 以上条目均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
 > 2026-11-23 状态：5.3 / 5.4 / card 已完成；只剩 `judgement_mna_2016`（5.2）与 `publibc/bf`。
@@ -1796,7 +1800,7 @@ handler      @0x40116c：
 | 对象 | 保护 / 形态 | 已知信息 | 结论 / 阻塞点 |
 | --- | --- | --- | --- |
 | pwnable.tw `hacknote`（`/tmp/newchal/hacknote`，未入库） | i386、Partial RELRO、Canary、NX、No PIE；菜单 add/delete/print，`notelist[5]` 在 `0x804a050`，`note = {fn, content}` | 反汇编（`0x80488a5` 的 print 分支）确认调用约定是 **`fn(note)`**：`mov eax,[notelist[i]]` 取 `fn`，`push edx` 推的是 **note 指针本身**；随后 `print_note_content` 做的事是 `puts(note->content)`。所以把 `fn` 改成 `system` 只能得到 `system(note)`，命令串的第一个 4 字节必然是被覆盖上的 `&system`，拿不到 content 里的 `"/bin/sh"`。真正可行的路子需要 heap 泄漏后做 fastbin 攻击（2.24 无 tcache），链路明显超出 20 分钟预算 | **负结果：本二进制上“改 `print_note_content` 为 `system` + content 放 `/bin/sh`”的通用解法不成立**（那是 `fn(content)` 语义的版本）。按 20 分钟规则降级，改由 `labs/lab_heap_uaf`（§3.L6）补 `heap_uaf` 第二题 |
-| `heap_exploitation/card`（题 26） | 64 位、2.27；`cards[]` 上限 8 | 本机 `/tmp/libc227` 是**扁平布局**（`ld-2.27.so` + `libc-2.27.so`），原先 `verify_all.sh` 只探 `root/lib/x86_64-linux-gnu/`，所以一直是 SKIP。现已能启动（`--library-path /tmp/libc227`），但 stage-1 的挡板 `create(8)` 在该二进制上无效（索引上限 8）→ S7 直接并进 top，unsorted bin 泄漏拿不到 `main_arena` | **已知缺陷，保持 SKIP**：`verify_all.sh` 用 `CARD227_LEAK_OK=1` 显式开关控制；修好 stage-1 布局后再打开。详见 `heap_exploitation/26_card_speedrun.md` §9 |
+| `heap_exploitation/card`（题 26） | 64 位、2.27；菜单 allocate / read(不限长) / free(不清零) / write(n 可控) | 本机 `/tmp/libc227` 是扁平布局（`ld-2.27.so` + `libc-2.27.so`），`--library-path` 能正常启动。**2026-11-26 实测更新**：`create(0..14)` 与 `show(idx,0x98)` 都可用，stage-1 的 leak 已跑通（`u64(leak[0x28:0x30]) - 0x3ebca0` 与 `/proc/<pid>/maps` 的 libc base 完全一致），旧说法「`cards[]` 上限 8 导致拿不到 `main_arena`」不成立。真实卡点：`__free_hook` 写入后 `free()` 不触发 hook（`system` / `_exit` / `0xdeadbeef` 三组对照都不崩不退），且 `show` 读回一致属自证循环、未证明落点 | **主动放弃（PENDING）**：`verify_all.sh 26` 固定 SKIP，旧 `CARD227_LEAK_OK` 开关已删除；EXP/文档已改名加 `(pending)`。卡点与重开步骤见 `heap_exploitation/26_card_speedrun(pending).md` §10 |
 
 ### 5.8 2026-11-25 新增入库（`write4` / `badchars`，已解决，非 pending）
 

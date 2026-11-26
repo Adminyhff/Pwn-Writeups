@@ -118,23 +118,10 @@ fi
 run_case 24 sandbox_seccomp 'flag:' "$PY" 24_easyroptocol_exp.py
 
 # ---- heap_exploitation ----
-# 2.27 环境有两种常见落地形状：deb 解包（root/lib/x86_64-linux-gnu）与扁平目录（libc227/ 下直接放）。
-LIB227=""
-for d in /tmp/libc227/root/lib/x86_64-linux-gnu /tmp/libc227; do
-  [ -x "$d/ld-2.27.so" ] && { LIB227="$d"; break; }
-done
-LIB227="${LIB227:-/tmp/libc227/root/lib/x86_64-linux-gnu}"
-if need heap_exploitation/card 26 '缺少题目二进制'; then
-  if need "$LIB227/ld-2.27.so" 26 '缺 libc 2.27 loader（见 26_card_speedrun.md §6）'; then
-    if [ "${CARD227_LEAK_OK:-0}" = "1" ]; then
-      run_case 26 heap_exploitation 'shell ok|GOT THE FLAG' env \
-        LD_SO="$LIB227/ld-2.27.so" LIBC_DIR="$LIB227" LIBC="$LIB227/libc-2.27.so" \
-        "$PY" 26_card_exp.py LOCAL
-    else
-      want 26 && { echo "26    SKIP  (已知缺陷：本二进制 cards 索引上限为 8，stage-1 挡板 create(8) 不成立 → leak 取不到 main_arena；见 26_card_speedrun.md §9；确认修复后 CARD227_LEAK_OK=1 再跑)"; SKIP=$((SKIP+1)); }
-    fi
-  fi
-fi
+# 26 card：2026-11-26 主动放弃（PENDING）。exp/文档已改名加 (pending) 后缀，不再实跑；
+# stage-1 的 libc 泄漏已经跑通，卡在 __free_hook 写入后 free 不触发 hook，
+# 结论与重开步骤见 heap_exploitation/26_card_speedrun(pending).md §10。
+want 26 && { echo "26    SKIP  (PENDING：主动放弃，非待修；见 heap_exploitation/26_card_speedrun(pending).md §10)"; SKIP=$((SKIP+1)); }
 
 # ---- fsop ----
 LIB224=/tmp/libc224i32
