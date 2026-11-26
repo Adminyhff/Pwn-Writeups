@@ -10,6 +10,9 @@
 本仓库按 **题型模式特征（pattern）** 组织，而不是按单道题目建文件夹。
 同一模式下的题目文件统一放在以该模式命名的目录中，文件名使用 `<题号>_<题目名>_<类型>` 前缀避免冲突。
 
+> **题型已冻结（2026-11-26）**：模式分类固定为 **24 类**，不再新增。
+> 未解/未展开的题目全部收进 [`_pending/`](_pending/README.md)，**不计入**下面的题数矩阵。
+
 ```text
 Pwn_Writeups/
 ├── README.MD
@@ -187,6 +190,14 @@ Pwn_Writeups/
 │   ├── README.md
 │   ├── 29_pwnable_tw_seethefile_{speedrun,exp}.*
 │   └── seethefile
+├── _pending/                           # 未解档案（不计入 24 类 / 不进 verify_all 矩阵）
+│   ├── README.md                      # 索引：状态 + 卡点 + 重开规则
+│   ├── 35_judgement_mna_2016/         # i386 格式化字符串，isprint 过滤挡住地址注入
+│   │   ├── judgement_mna_2016
+│   │   └── recon.md
+│   └── 36_publibc_bf/                 # PIE tape 解释器 + 不可达后门 system("/bin/sh")
+│       ├── bf
+│       └── recon.md
 └── tools/                             # 仓库自检脚本（非题目）
     ├── repro_audit.py                 # 01–34 + L1–L11 复现性静态审计（见 README 文末）
     ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
@@ -223,6 +234,19 @@ Pwn_Writeups/
 | `badchars_encoding` | 输入被逐字节过滤（坏字符 `x g a .`，命中改 `0xeb`），先写密文再用 `xor byte ptr [r15], r14b` 原地解码；34 是同一族的另一面：没有写内存原语，用 `bextr` 算地址 + `xlatb` 取字符 + `stosb` 落盘 | `32_ropemporium_badchars`、`34_ropemporium_fluff` |
 
 逐题的判定依据、偏移、目标地址与关键坑点见 [PATTERN_CLASSIFICATION.md](PATTERN_CLASSIFICATION.md)。
+
+### Pending 档案（不计入上面的 24 类）
+
+未解 / 未展开的题统一收进 [`_pending/`](_pending/README.md)，只留“侦察到什么、卡在哪、下一步怎么走”，
+重开时不必重新推导。它们**不进入** `tools/verify_all.sh`，也**不计入** 44 题可复现矩阵。
+
+| 编号 / 来源 | 题 | 拟定模式 | 卡点 | 档案 |
+| --- | --- | --- | --- | --- |
+| 35 | `judgement_mna_2016` | `format_string_write` | `isprint` 逐字节过滤使绝对地址无法进格式串；栈上可用指针仅 `strchr@GOT` | [`_pending/35_judgement_mna_2016/recon.md`](_pending/35_judgement_mna_2016/recon.md) |
+| 36 | `publibc/bf` | `heap_exploitation` | 有**不可达后门** `system("/bin/sh")@0x19d8`，但缺 RIP 控制点（Full RELRO + Canary + 单一堆指针） | [`_pending/36_publibc_bf/recon.md`](_pending/36_publibc_bf/recon.md) |
+| 26 | `card` | `heap_exploitation` | glibc 2.27 下 `__free_hook` 写入后 `free()` 不触发（stage-1 libc 泄漏已通） | `heap_exploitation/26_card_speedrun(pending).md` |
+| — | `_vendor/tcache_tear` | `tcache_poisoning` | 2.27 无 `tcache_entry.key`，但 free 上限 8 次 < 链路需要的 9 次 | `PATTERN_CLASSIFICATION.md` §5.6 |
+| — | `_vendor/death_note` | `heap_uaf` + `ret2shellcode` | 需要 i386 2.24/2.23（无 tcache）环境 | `PATTERN_CLASSIFICATION.md` §5.6 |
 
 ## File Conventions
 
@@ -548,6 +572,18 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
   唯一能省一次的是 one_gadget（本机无该工具）。完整链路、地址布局与重开步骤
   见 `PATTERN_CLASSIFICATION.md` §5.6 的 `tcache_tear` 行与 §5.12。
   题型分类 **二十三类 → 二十四类**。
+- **2026-11-26 第三轮：题型冻结 + 全仓库整理**（**不新增题型**，口径仍是 24 类 / 44 题）：
+  顶层 `To Be Continued/` **解散**，两道未解题带完整侦察档案移入 `_pending/`：
+  `35_judgement_mna_2016`（i386 格式化字符串，`isprint` 过滤挡住地址注入）与
+  `36_publibc_bf`（PIE tape 解释器），各带 `recon.md`，索引见 `_pending/README.md`。
+  其中 `bf` 的旧结论被**更正**：**不是**“需 hook / FSOP”——二进制里存在**无调用点/无跳表引用的后门**
+  `0x19d8: system("/bin/sh")`（字符串 `@0x2120`），Full RELRO 排除改 GOT、canary 排除栈溢出、
+  `add` 只覆盖单一全局指针（无 free/show → 无 UAF），所以**真正缺的是一个 RIP 控制点**；
+  下一步按 L11 的思路找“与 `0x19d8` 同 256 字节块”的可 1 字节覆盖的返回地址。
+  同时 `tcache_tear` / `death_note` / `26_card` 的 PENDING 状态统一登记到
+  `_pending/README.md`，`_vendor/attach_manifest.md` 同步（不再写“待做”）。
+  校验：`bash tools/verify_all.sh` → `PASS=23 FAIL=0 SKIP=1`（与上一轮完全一致），
+  `python tools/repro_audit.py` → 44 题 / 0 文档缺口（`_pending/` 不参与扫描）。
 - **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
   `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
   （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。

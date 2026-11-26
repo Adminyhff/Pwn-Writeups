@@ -22,9 +22,9 @@
 | `pivot/pivot` | amd64 / 动态 / not stripped | No | NX | 无 | partial | `stack_pivot` | ✅ 已归档为 `22_ropemporium_pivot` |
 | `pivot/libpivot.so` | amd64 / 共享库 | — | NX | 无 | partial | 同上（含 `ret2win@0xa81`、`foothold_function@0x96a`） | ✅ 已归档 |
 | `orw` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `sandbox_seccomp` | ✅ 已归档为 `23_pwnable_orw`（本地需 `orw_local_exec`） |
-| `tcache_tear` | amd64 / 动态 | No | NX | 有 | Full | `tcache_poisoning` | 待做 |
+| `tcache_tear` | amd64 / 动态 | No | NX | 有 | Full | `tcache_poisoning` | **PENDING**（2026-11-26 降级：2.27 无 key 但 free≤8 次 < 链路需 9 次；见 `_pending/README.md`） |
 | `seethefile` | i386 / 动态 | No | NX | 无 | partial | `fsop` | ✅ 已归档为 `fsop/29_pwnable_tw_seethefile`（`_IO_str_finish` FSOP） |
-| `death_note` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `shellcode` / heap | 待做 |
+| `death_note` | i386 / 动态 | No | **EXECSTACK (RWE)** | 有 | partial | `shellcode` / heap | **PENDING**（未展开；需 i386 2.24/2.23 无 tcache 环境，见 `_pending/README.md`） |
 | `libc-4e5dfd83….so` | amd64 glibc **2.24**（Ubuntu 2.24-9ubuntu2.2） | — | — | — | — | 实测 build-id `aad7dbe330…`，与文件名不符；**不能**当 `tcache_tear` 的 2.27 libc 用 | — |
 | `libc6_2.24-3ubuntu2.2_i386.deb`（解包） | i386 glibc **2.24-3ubuntu2.2**（md5 `79f8c0d9…`） | — | — | — | — | `ret2libc`（33C3 `rec` 本地复现） | ✅ 已归档为 `ret2libc/libc-2.24.so` |
 | `rec`（33C3） | i386 / 动态 / stripped / 9564 B | **Yes** | NX | 有 | **Full** | `ret2libc`（未初始化函数指针 + Polish `esp` 泄漏） | ✅ 已归档为 `ret2libc/rec_33c3_2016`（sha256 `cc549fbc…`） |
@@ -39,6 +39,10 @@
   该 libc 的 `_IO_str_jumps = 0x1B49C0`、`system = 0x3B020`；EXP 会从 `LIBC` 文件里
   自己在 `__libc_IO_vtables` 段定位 `_IO_str_jumps`，换版本只需换 `LIBC`。
 - `_vendor/` 下的二进制只用于分析；正式归档的副本在模式目录里，用 `git add -f` 提交。
+- **未解题目统一收口（2026-11-26）**：原顶层 `To Be Continued/` 已解散，
+  `judgement_mna_2016` → `_pending/35_judgement_mna_2016/`、`publibc/bf` → `_pending/36_publibc_bf/`，
+  各带一份 `recon.md`。`_pending/` 的二进制同样是 deny-all 白名单外，归档用 `git add -f`。
+  本清单上表中 `tcache_tear` / `death_note` 的 PENDING 状态也以 `_pending/README.md` 为准。
 - `_vendor/libc-4e5dfd83….so` 版本是 **2.24**（build-id `aad7dbe330…`），不是 pwnable.tw
   `tcache_tear` 配套的 2.27；做 `tcache_tear` 需另下 libc 2.27（仓库内 `card/libc.so` 是
   2.27-3ubuntu1，build-id `b417c0ba…`，可作同代参考）。

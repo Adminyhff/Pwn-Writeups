@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按二十四类利用原语（exploit primitive）划分：
+本仓库按二十四类利用原语（exploit primitive）划分（**2026-11-26 冻结，不再新增**；未解题见 `_pending/`）：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -1798,7 +1798,12 @@ stosb                      # 写进 .bss，rdi++
 
 ## 5. 待解登记（pending）
 
-以下二进制仍在 `To Be Continued/` 里，尚未归档到模式目录，避免“强行套模板”造成错误结论。
+> **题型冻结（2026-11-26）**：§1 的 **24 类不再新增**。本节条目只作为"未解档案"保留，
+> **不计入 24 类**，也**不计入** `README.md` 的 44 题可复现矩阵（`PASS=23 / 44 题`口径不变）。
+
+未解题目统一归档到 [`_pending/`](_pending/README.md)：原 `To Be Continued/` 已解散，
+`judgement_mna_2016` → `_pending/35_judgement_mna_2016/`、`publibc/bf` → `_pending/36_publibc_bf/`，
+各自带一份 `recon.md`（含可运行命令、已验证结论、阻塞点、下一步）。
 每节都做到“定性 + 阻塞点明确”，后续可以直接接着做。
 （`rec_33c3_2016` 已于 2026-11 解决，5.1 仅保留记录；`canary3` / `jarvisoj_http` / `card`
 于 2026-11-23 全部解决并归档，5.3 / 5.4 / 5.5 保留当时的阻塞记录供对照。）
@@ -1810,7 +1815,7 @@ stosb                      # 写进 .bss，rdi++
 归档为 `ret2libc/25_rec_33c3_2016_*`，判定依据与栈距离计算见 §3.25，
 EXP 在本地 i386 glibc 2.24 / 2.43 下均稳定拿到 flag。
 
-### 5.2 `judgement_mna_2016`（MNA 2016 / flag 判定器）
+### 5.2 `judgement_mna_2016`（MNA 2016 / flag 判定器）— PENDING，档案 [`_pending/35_judgement_mna_2016/recon.md`](_pending/35_judgement_mna_2016/recon.md)
 
 ```text
 32 位 i386、No PIE（EXEC）、Canary、NX、Partial RELRO
@@ -1856,6 +1861,20 @@ args 1..264 中不存在 0x804a0a0（flag），也不存在 0x804a010（strcmp@G
 **2026-11-23 复核**：重跑 `%1$p..%264$p` 全扫（`/tmp/audit/probe_judge.log`）仍无 `0x804a0a0` /
 `0x804a010` 槽位，可见栈上能用的指针只有 `strchr@GOT` 与 GOT 基址；按“20 分钟规则”暂时降级，
 状态保持 pending（下次从“`%n` 改 `strchr@GOT` → 第二轮”这条线继续）。
+
+**2026-11-26 归档**：原 `To Be Continued/judgement_mna_2016` 移入
+`_pending/35_judgement_mna_2016/`，并补了**实测可运行命令**（用仓库内
+`labs/lab_ret2dlresolve_i386/libc/ld-2.24.so` + `--library-path`，不依赖 `/tmp` 解包目录）：
+
+```bash
+cd '/home/yfhd5/Pwn_Writeups/_pending/35_judgement_mna_2016'
+printf 'FLAG{test}\n' > flag.txt
+printf 'AAAA\n' | ../../labs/lab_ret2dlresolve_i386/libc/ld-2.24.so \
+  --library-path ../../labs/lab_ret2dlresolve_i386/libc ./judgement_mna_2016
+rm -f flag.txt
+```
+
+输出 `Input flag >> AAAA` / `Wrong flag...` 即为正常。重开时直接读 `recon.md` §5 的三条下一步。
 
 ### ~~5.3 `PWN附件/canary3`（PIE + 字符串加密）~~ ✅ 已完成（→ `ret2libc/28_canary3_*`）
 
@@ -1926,15 +1945,21 @@ handler      @0x40116c：
 
 ### 5.5 其他高难题（仅登记，未展开）
 
+> 2026-11-26：本表里的 `publibc/bf` 已移到 [`_pending/36_publibc_bf/`](_pending/36_publibc_bf/recon.md)，
+> 并带了一份完整 `recon.md`（菜单表、全局布局、后门地址、已排除的路线）。下表该行已同步更正。
+
 | 二进制 | 保护 / 形态 | 已知信息 | 判定 |
 | --- | --- | --- | --- |
-| `publibc/bf` | PIE、Full RELRO、Canary；导入 `system` | 14KB，`scanf`/`getchar`/`putchar`/`malloc` + `system` —— 典型 brainfuck 解释器，越界指针对 tape 任意读写；Full RELRO 不能改 GOT | 需 hook / FSOP，30 分钟以上 |
+| `publibc/bf` | PIE、Full RELRO、Canary；导入 `system`；stripped | 14KB；菜单 6 项（add / edit / compile / exec / bye / default），全局 `ptr@0x4060`、`size@0x4068`、tape（word 数组）`@0x4080`；`0x1269` 把输入编译成 tape 指令，`0x151d` 解释执行（先 `memset 0x1fffe`，再按 enum `0..8` 分派） | **2026-11-26 更正旧判定**：**不是**“需 hook / FSOP”。二进制里有**死代码后门** `0x19d8: system("/bin/sh")`（字符串 `"/bin/sh"@0x2120`），但**无任何调用点、也不在菜单 jump table 里**（`grep -E '(call\|jmp).*19d8'` 为空）。Full RELRO 排除改 GOT、canary 排除栈溢出、`add` 只覆盖单一全局指针（没有 free / show → 无 UAF）→ **真正缺的是一个 RIP 控制点**。下一步照 L11 的思路找“与 `0x19d8` 同 256 字节块”的可 1 字节覆盖的返回地址 |
 
 > `card/pwn` 于 2026-11-23 尝试入库（`heap_exploitation/26_card_*`，见 §3.26），2026-11-26
 > **主动放弃并归档为 PENDING**（`__free_hook` 未打通），不计入可复现矩阵。
 
 > 以上条目均按“20 分钟规则”降级：先保证已解题目归档完整，再回头做。
 > 2026-11-23 状态：5.3 / 5.4 / card 已完成；只剩 `judgement_mna_2016`（5.2）与 `publibc/bf`。
+> **2026-11-26**：`To Be Continued/` 已解散，两道题分别移入
+> `_pending/35_judgement_mna_2016/`（本节 5.2）与 `_pending/36_publibc_bf/`，
+> 各带 `recon.md`；本表 5.5 行与 `recon.md` 里的结论**以 `recon.md` 为准**（含 `bf` 的定性更正）。
 
 ### 5.6 2026-11-24 新登记（`_vendor/` 剩余附件 + ret2dlresolve 负结果）
 
