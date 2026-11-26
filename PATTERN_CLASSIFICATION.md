@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按十九类利用原语（exploit primitive）划分：
+本仓库目前按二十三类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -30,6 +30,10 @@
 | `fsop` | 伪造 `_IO_FILE` / vtable | 可控 `FILE *`（或 `_IO_list_all`）+ 能把二进制写进已知地址 → 伪造 `_IO_FILE`，借 `fclose` / `exit` 走到 libc 的 `_IO_str_finish` 等槽位 |
 | `rop_write_memory` | 任意地址写 → 自造字符串 | 目标函数要一个**内存里不存在**的字符串（`print_file("flag.txt")`、`system("/bin/sh")`），但有 `mov [reg_a], reg_b ; ret` 之类写原语 → 写进 `.data`/`.bss`，再 `pop rdi` 传地址 |
 | `badchars_encoding` | 输入被字符过滤 → 编码规避 | `pwnme` 把输入逐字节与坏字符表比对（命中就改成 `0xeb`/拒绝），而所需字符串或地址命中 → 写密文 + `xor/add/sub byte ptr [reg], regb` 原地解码 |
+| `format_string_read` | 格式化字符串**只读** | 唯一漏洞是 `printf(user_input)` 且没有可写的目标（或不需要写）：用 `MARKMARK` + `%p` 扫栈定位参数下标 `k`，再用 `%{k+n}$s` 读 GOT / `.bss` 里的 flag，全程不碰 `%n` |
+| `double_free` | 同一块被释放两次 | `free(a); free(b); free(a)`（或 `free` 前 `memset` 掉 `tcache_entry.key`、`del` 不清 slot）→ 同一块在 tcache 里成环（`a→b→a`）→ 取出时改 `next`，后续 `malloc` 落任意地址 |
+| `off_by_one` | 堆上差一个字节 | 写入长度比缓冲多 1（`read(0,p,size+1)`，或 `buf[size]=0`）→ 改写**相邻 chunk 的 size LSB**（如 `0x31→0x61`，保留 `PREV_INUSE`）→ 该块 free 进更大的 tcache bin → 取回时覆盖后块头部（chunk overlap）→ 再 poison / 改 `next` |
+| `unsafe_unlink` | 伪造 `prev_size` 骗 `unlink` | 写入长度多 8 字节（或直接堆溢出）改相邻块的 `prev_size`/`size` 并清 `PREV_INUSE` → `free` 触发向后合并 → 伪块 `P` 取 `slots[0]` 里存的**那个 user 指针**（`prev_size`=0xf0，不是 `0x100`），`FD`/`BK` 指向 `&slots[0]∓0x18/0x10`，使 `chunksize(P)==prev_size` 与 `FD->bk==BK->fd==P` 两道检查同时成立 → `unlink` 把 `slots[0]` 写成 `FD`，之后 `edit(0)` 即任意写 |
 
 判定顺序：
 
@@ -39,7 +43,9 @@
 1. 有没有可控输入 / 内存破坏点？
    └─ 没有，且程序直接给 shell → network_interaction_free_shell
 2. 输入是否被直接传给 printf？
-   └─ 是 → format_string_write
+   ├─ 是，且需要一个**写**动作（改全局变量 / GOT / 返回地址）→ format_string_write（`%n`）
+   └─ 是，但只需**读**（flag 只在 `.bss`、要 leak libc / canary，程序自己不打印）
+      → format_string_read（`MARKMARK`+`%p` 找下标，再 `%{k+n}$s` 读；无 `%n`）
 3. NX 是否关闭（`GNU_STACK=RWE`），且能拿到可执行内存的地址？
    └─ 是 → ret2shellcode
 4. 是否存在可控的 `FILE *` / `_IO_list_all`（程序自己 `fopen/fread/fclose`，或能写全局 `fp`）？
@@ -62,7 +68,13 @@
    └─ 是，且服务每次连接重启（fork server）→ canary_bruteforce（逐字节试，LSB 恒为 `\x00`）
 11. 漏洞在堆上吗？
    ├─ free 后指针仍被引用，可重占旧对象改函数指针 → heap_uaf
-   ├─ 已释放 chunk 的 `next` 可控（UAF / double free）→ tcache_poisoning
+   ├─ 同一块被 free 两次（或 `free` 前 `memset` 清掉 `tcache_entry.key`、`del` 不清 slot）
+   │  → double_free（tcache 成环 `a→b→a`，取出时改 `next`）
+   ├─ 已释放 chunk 的 `next` 可控（UAF / double free 的后续步骤）→ tcache_poisoning
+   ├─ 写入长度比缓冲多 1 字节（`read(0,p,size+1)` / `buf[size]=0`）
+   │  → off_by_one（改相邻 size LSB `0x31→0x61` → 换 bin → chunk overlap → 再 poison）
+   ├─ 写入长度多 8 字节，能改相邻 `prev_size`/`size` 并清 `PREV_INUSE`
+   │  → unsafe_unlink（伪块 = `slots[0]` 里存的 user 指针，`FD/BK` 指向 `&slots[0]∓`）
    └─ 需要操纵堆布局 / 分配器元数据 / 相邻对象指针 → heap_exploitation
 12. 目标函数要一个字符串指针，而二进制/内存里没有这个字符串（`print_file("flag.txt")`、
     `system("/bin/sh")`）？
@@ -81,6 +93,12 @@
 > 第 6~8 条（`ret2csu` / `ret2syscall` / `ret2dlresolve`）是"传参能力不足"的三种补法：
 > 缺 gadget 用 csu 补、没 libc 用 syscall 自己拼、没 `system` 用动态链接器去解析。
 > 它们与 `ret2text`/`ret2libc` 互斥：能直接 `pop rdi` + 调 `system` 时不需要绕。
+
+> **审计盲区（务必人工复核）**：`tools/repro_audit.py` 只校验“每题是否有文档块 /
+> 能否编译实跑”，**不检查 §1 分类表的行数与 §2 总览的题数**。2026-11-26 就出现过
+> §1 仍写“十九类”而 `README.md` 已写“二十三类”的不一致（L7–L10 四个新模式漏登记，
+> 审计一直是 43 题 / 0 缺口）。新增题型时必须四处同步改：
+> **① §1 分类表 + ② §1 判定树 + ③ §2 总览 + ④ `README.md` 的模式表与题数**。
 
 ---
 
