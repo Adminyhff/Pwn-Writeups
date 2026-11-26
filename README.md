@@ -150,7 +150,13 @@ Pwn_Writeups/
 │   │   ├── Makefile
 │   │   ├── chal
 │   │   └── exp.py
-│   └── lab_unsafe_unlink/             # L10：多写 8 字节 → 伪造 prev_size → unlink → 改 slots[0]
+│   ├── lab_unsafe_unlink/             # L10：多写 8 字节 → 伪造 prev_size → unlink → 改 slots[0]
+│   │   ├── README.md
+│   │   ├── src/chal.c
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   └── exp.py
+│   └── lab_pie_partial_overwrite/      # L11：PIE + 1 字节溢出 → 只改 saved rip 的 LSB（同 256 字节块）
 │       ├── README.md
 │       ├── src/chal.c
 │       ├── Makefile
@@ -182,7 +188,7 @@ Pwn_Writeups/
 │   ├── 29_pwnable_tw_seethefile_{speedrun,exp}.*
 │   └── seethefile
 └── tools/                             # 仓库自检脚本（非题目）
-    ├── repro_audit.py                 # 01–34 + L1–L10 复现性静态审计（见 README 文末）
+    ├── repro_audit.py                 # 01–34 + L1–L11 复现性静态审计（见 README 文末）
     ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
     └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
@@ -193,6 +199,7 @@ Pwn_Writeups/
 | --- | --- | --- |
 | `network_interaction_free_shell` | 程序正常逻辑直接给 shell，无内存破坏点 | `01_test_your_nc`、`17_others_shellcode` |
 | `ret2text` | 栈溢出（`gets` / `read`），覆盖返回地址跳到二进制内已有后门；27 是“服务端逐字节读请求 + CSU ROP”的变体（不需要后门函数） | `02_rip`、`03_warmup_csaw_2016`、`05_get_started_3dsctf_2016`、`06_jarvisoj_level0`、`09_canary`、`27_jarvisoj_http` |
+| `pie_partial_overwrite` | 溢出只够改 saved RIP 的**最低 1 字节**、且 PIE 基址无法泄漏 → 因“页内偏移固定”，把返回地址改到同一 256 字节块内的 win 分支（`aligned(256)` + 短函数体保证同块，不爆破） | `L11_lab_pie_partial_overwrite`（自造） |
 | `ret2libc` | 栈溢出 leak libc，返回 `main` 后二阶段 `system("/bin/sh")`（25 是“未初始化函数指针 + `esp` 泄漏栈喷”的变体，无栈溢出；28 靠登录 off-by-one + `printf("%s")` 泄 canary） | `07_newstarctf_2023_ret2libc`、`10_jarvisoj_level4`、`11_2018_rop`、`12_bjdctf_2020_babyrop`、`13_putsorsys`、`18_repeater`、`19_pwnable_silverbullet`、`20_bbbaby_pwn1`、`25_rec_33c3_2016`、`28_canary3` |
 | `ret2csu` | 缺 `pop rdx`（或 `pop rsi`）时用 `__libc_csu_init` 的 `pop rbx/rbp/r12/r13/r14/r15; ret` + `call [r12+rbx*8]` 补参数；第一参要完整 64 位时 csu 只设 rdx，再用 pop 补前两参；33 是同族但更优的变体：有合并 gadget `pop rdi; pop rsi; pop rdx`，不需要 csu | `30_ropemporium_ret2csu`、`33_ropemporium_callme` |
 | `ret2syscall` | 静态/无 libc，用 `pop eax/ebx/ecx/edx` + `int 0x80` 自己拼 `execve` | `L2_lab_ret2syscall_i386`（自造） |
@@ -404,18 +411,24 @@ cd ../labs/lab_unsafe_unlink
 make
 printf '__PWNED__{unlink_ok}\n' > flag.txt
 python exp.py
+
+cd ../labs/lab_pie_partial_overwrite
+# L11 是自造 PIE 局部覆盖靶场：1 字节改 saved RIP 的 LSB → 同 256 字节块内的 win 分支
+make
+printf '__PWNED__{pie_partial_ok}\n' > flag.txt
+python exp.py
 ```
 
 > 远程 EXP 中的 `HOST` / `PORT` 会随靶机变化；CTF² 平台需要 `ssl=True`。
 
 ---
 
-## 复现自检（01–34 + L1–L10，2026-11-26）
+## 复现自检（01–34 + L1–L11，2026-11-26）
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
 
-它覆盖 `*/*_exp.py`（题号 01–34）与 `labs/*/exp.py`（L1–L10；EXP 名统一是 `exp.py`，
+它覆盖 `*/*_exp.py`（题号 01–34）与 `labs/*/exp.py`（L1–L11；EXP 名统一是 `exp.py`，
 文档用同目录 `README.md`），检查五项，全部是“缺了就跑不起来”的硬条件：
 
 1. `*_exp.py` / `labs/*/exp.py` 能否 `compile()` 通过（不落 `__pycache__`）；
@@ -432,10 +445,10 @@ python tools/repro_audit.py --md     # Markdown 表（本节的表就是它生�
 python tools/repro_audit.py 08 19    # 只审指定题号
 python tools/repro_audit.py 6        # 只审 lab L6（也接受 `L6` 写法）
 python tools/repro_audit.py L7 L8    # 只审 lab L7 / L8
-python tools/repro_audit.py L9 L10   # 只审 lab L9 / L10
+python tools/repro_audit.py L9 L10 L11   # 只审 lab L9 / L10 / L11
 ```
 
-当前结果：**43 题（33 个编号题 + 10 个 lab），文档缺口 0**
+当前结果：**44 题（33 个编号题 + 11 个 lab），文档缺口 0**
 （26_card 已改名 `(pending)` 归档、不再计入；`verify_all.sh` 里仍保留 26 的 SKIP 占位）。
 
 ### 32 位题的公共前置（i386 loader）
@@ -521,6 +534,20 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
   （`strings libc.so.6 | grep -c 'memory corruption (fast)'` → `0`，
   free 20 个 0x20 块后 dump heap 无任何块进 fastbin 链），见 `lab_unsafe_unlink/README.md` §0。
   题型分类 **二十一类 → 二十三类**。
+- **2026-11-26 第二轮新增 1 个题型 / 1 个 case**（自造 lab，见 `PATTERN_CLASSIFICATION.md`
+  §3.L11 / §5.12）：`L11_lab_pie_partial_overwrite`（`pie_partial_overwrite`：PIE 下
+  溢出只够覆盖 saved RIP 的最低 1 字节、且没有任何泄漏点 → 靠“页内偏移固定”把
+  返回地址改到**同一个 256 字节块**内的 win 分支；`main` 用 `aligned(256)` + 短函数体
+  把这个不变量变成结构性的，所以 1 字节覆盖 100% 命中、不需要 nibble 爆破；
+  exp 用 `objdump` 自动解析两个地址并断言同块）。选这个题型的原因是不碰 glibc
+  分配器，**不受 2.43 语义变化影响**（对照 L10 的 fastbin 教训）。
+  **`_vendor/tcache_tear` 按 20 分钟规则降级 PENDING**：glibc 2.27 没有
+  `tcache_entry.key`，所以"同一指针 free 两次 = tcache dup"成立，理论上可以
+  "伪造 `.bss` 假块 → 进 unsorted → `info` 泄漏 main_arena → `__free_hook`"；
+  但 `free` 上限是 8 次，stage-1 最少 5 次、stage-2 需 4 次，共 9 次——**差 1 次**，
+  唯一能省一次的是 one_gadget（本机无该工具）。完整链路、地址布局与重开步骤
+  见 `PATTERN_CLASSIFICATION.md` §5.6 的 `tcache_tear` 行与 §5.12。
+  题型分类 **二十三类 → 二十四类**。
 - **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
   `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
   （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。
@@ -583,8 +610,9 @@ bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/veri
 | L8 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-25 新增） |
 | L9 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-26 新增） |
 | L10 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-26 新增） |
+| L11 | 先 `make`（主机 gcc，**与 glibc 版本无关**；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-26 新增） |
 
-总计 **PASS=22 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
+总计 **PASS=23 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
 （SKIP 的那 1 题是 `26_card`：**2026-11-26 主动放弃（PENDING）**。stage-1 的 libc 泄漏已跑通
 并与 `/proc/<pid>/maps` 交叉验证一致，但 `__free_hook` 写入后 `free()` 不触发 hook
 （`system` / `_exit` / `0xdeadbeef` 三组对照都不崩不退）。exp 与文档已改名加 `(pending)` 后缀，

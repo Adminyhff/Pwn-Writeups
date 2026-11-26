@@ -199,6 +199,14 @@ if need labs/lab_unsafe_unlink/chal L10 '先 cd labs/lab_unsafe_unlink && make';
   run_case L10 labs/lab_unsafe_unlink '__PWNED__' "$PY" exp.py
 fi
 
+# ---- labs 第五梯队（pie_partial_overwrite）----
+# 只改 saved rip 的最低 1 字节；要求“返回地址”与“win 分支”在同一 256 字节块，
+# exp 会用 objdump 自动解析并断言，所以 chal 重新编译后无需改常量。
+if need labs/lab_pie_partial_overwrite/chal L11 '先 cd labs/lab_pie_partial_overwrite && make'; then
+  mk_flag labs/lab_pie_partial_overwrite '__PWNED__{pie_partial_ok}'
+  run_case L11 labs/lab_pie_partial_overwrite '__PWNED__' "$PY" exp.py
+fi
+
 echo "----------------------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ -n "$FAILED" ] && echo "失败题号:$FAILED（日志在 $OUT/）"

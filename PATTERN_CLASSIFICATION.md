@@ -7,7 +7,7 @@
 
 ## 1. 分类原则
 
-本仓库目前按二十三类利用原语（exploit primitive）划分：
+本仓库目前按二十四类利用原语（exploit primitive）划分：
 
 | 模式目录 | 共同模式特征 | 判定核心 |
 | --- | --- | --- |
@@ -34,6 +34,7 @@
 | `double_free` | 同一块被释放两次 | `free(a); free(b); free(a)`（或 `free` 前 `memset` 掉 `tcache_entry.key`、`del` 不清 slot）→ 同一块在 tcache 里成环（`a→b→a`）→ 取出时改 `next`，后续 `malloc` 落任意地址 |
 | `off_by_one` | 堆上差一个字节 | 写入长度比缓冲多 1（`read(0,p,size+1)`，或 `buf[size]=0`）→ 改写**相邻 chunk 的 size LSB**（如 `0x31→0x61`，保留 `PREV_INUSE`）→ 该块 free 进更大的 tcache bin → 取回时覆盖后块头部（chunk overlap）→ 再 poison / 改 `next` |
 | `unsafe_unlink` | 伪造 `prev_size` 骗 `unlink` | 写入长度多 8 字节（或直接堆溢出）改相邻块的 `prev_size`/`size` 并清 `PREV_INUSE` → `free` 触发向后合并 → 伪块 `P` 取 `slots[0]` 里存的**那个 user 指针**（`prev_size`=0xf0，不是 `0x100`），`FD`/`BK` 指向 `&slots[0]∓0x18/0x10`，使 `chunksize(P)==prev_size` 与 `FD->bk==BK->fd==P` 两道检查同时成立 → `unlink` 把 `slots[0]` 写成 `FD`，之后 `edit(0)` 即任意写 |
+| `pie_partial_overwrite` | PIE 下只改地址低字节 | 溢出只够覆盖 saved RIP 的**最低 1 字节**（或 1.5 字节），且无法泄漏 PIE 基址 → 靠"页内偏移固定"把返回地址改到同一个 256 字节块内的另一条指令（不可达的 win 分支 / `call win`），不猜基址、不爆破 |
 
 判定顺序：
 
@@ -60,6 +61,9 @@
 8. 二进制动态链接、导入表里没有 `system`/`execve`，但有 `read`/`puts` 且能写已知地址？
    └─ 是 → ret2dlresolve（伪造 `Elf_Rel`/`Elf_Sym`/符号名 + 调 `plt0`；先看架构与 glibc 版本）
 9. 溢出的目标是 saved RIP 吗？
+   ├─ 是，但只够覆盖**最低 1 字节**，且 PIE 已开、没有任何基址泄漏
+   │  → pie_partial_overwrite（页内偏移固定 → 改到同一个 256 字节块内的 win 分支；
+   │     目标落在别的块时才需要 1/16 nibble 爆破，或先找 1.5 字节覆盖点）
    ├─ 是，但可用字节数不足以放下完整 ROP 链 → 先 stack_pivot
    ├─ 是，且跳转到二进制内已有代码 → ret2text
    ├─ 是，但需要 leak libc 才能调用 system → ret2libc
@@ -146,6 +150,7 @@
 | L8 | `lab_fmtstr_read`（自造） | 格式化字符串**只读** / 64 位（glibc 2.43） | `format_string_read` | 唯一漏洞 `printf(buf)`，无 `%n`：`MARKMARK`+`%p` 扫栈得 canary / libc 指针并定位 `k=8` → `%{k+2}$s` 读 `puts@got`（页对齐校验得 libc base）→ 同法读 `.bss` 的 `secret[]` 拿 flag；协议是 `u32 长度 + 定长 payload`（二进制安全） | 0（无栈溢出；canary 只是素材） | `secret=0x404080`、`puts@got=0x404000`、目标地址必须放格式串**后面**（否则 `0x00` 截断） |
 | L9 | `lab_off_by_one`（自造） | off-by-one → chunk overlap / safe-linking / 64 位（glibc 2.43） | `off_by_one` | `edit` 用 `read(0,p,sizes[i]+1)` 多读 1 字节 → 把相邻 0x30 chunk 的 size `0x31` 改成 `0x61` → `free` 进 `tcache[0x60]` → `malloc(0x58)` 取回时覆盖后块头部（chunk overlap）→ `show` 泄漏 `chunk>>12` → 改 `next` 让 `malloc` 落 `.bss` 的 `handlers[]` → `trigger` | 0（堆，纯 LSB 改写） | `handlers=0x4041a0`(16 对齐)、`win=0x4012bf`、偏移必须按物理布局 `chunk1.user+0x20` 算（按名义 size 会 `unaligned tcache chunk`） |
 | L10 | `lab_unsafe_unlink`（自造） | unsafe unlink / 绕过 2.29+ 双检查 / 64 位（glibc 2.43） | `unsafe_unlink` | `edit` 多写 8 字节改相邻 chunk 的 `prev_size`/`size`（清 `PREV_INUSE`）→ `free` 触发向后合并 → 伪块取 `P=a.user`（`prev_size=0xf0`），`P->fd/bk` 指向 `&slots[0]∓` → `chunksize(P)==prev_size` 与 `FD->bk==BK->fd==P` 同时通过 → `slots[0]` 被改写成 `.bss` 附近 → 改 `handlers[0]=win` | 0（堆） | **glibc 2.43 的 tcache 上限是 16**（填 7 个不够，`free(a)` 仍进 tcache）、a 必须在 `slots[0]`、`slots[]` 存 user 指针所以要 `prev_size=0xf0` 而非 `0x100` |
+| L11 | `lab_pie_partial_overwrite`（自造） | PIE 局部覆盖 saved RIP / 1 字节 / 64 位（无 canary，glibc 版本无关） | `pie_partial_overwrite` | `vuln()` 里 `read(0,buf,0x40+8+1)` 多读 9 字节：8 字节吃 saved rbp，第 9 字节正好是 saved rip 的 LSB；返回地址 `main+0x3a`（`call vuln` 下一条）与目标 `main+0x53`（`call win_path`）同属 256 字节块 `0x1400` → 只改 LSB `0x3a→0x53` 即跳进 win 分支读 flag | 0x48（RIP 首字节） | `main` 加 `aligned(256)` 且函数体 < 0x100 → 同块不变量结构性成立；exp 用 `objdump` 自动解析两个地址并断言同块 |
 | 31 | `ROP Emporium write4` | 任意地址写 → 自造 `"flag.txt"` / 64 位 No PIE | `rop_write_memory` | `mov qword ptr [r14], r15 ; ret` 把 8 字节字符串写进 `.data`；`print_file@plt` 的参数是字符串地址 | **0x28**（`pwnme` 的 `rbp-0x20`，`read` 上限 0x200） | `pop r14;pop r15;ret=0x400690`、`mov [r14],r15;ret=0x400628`、`pop rdi;ret=0x400693`、`print_file@plt=0x400510`、`.data=0x601028` |
 | 32 | `ROP Emporium badchars` | 坏字符过滤 → 编码规避 / 64 位 No PIE | `badchars_encoding` | 坏字符 `x g a .`：`"flag.txt"` 先 `^2` 成 `"dnce,vzv"` 写入 `.data`，再 8 次 `xor byte ptr [r15], r14b` 原地解码；解码地址从 `0x601030` 起（`0x60102e` 会撞 `.`） | **0x28**（`rbp-0x20`，payload 368 B / 上限 512 B） | `pop r12..r15=0x40069c`、`mov [r13],r12=0x400634`、`pop r14;pop r15=0x4006a0`、`xor [r15],r14b=0x400628`、`pop rdi=0x4006a3`、`print_file@plt=0x400510` |
 | 33 | `ROP Emporium callme` | 链式多函数调用 / 64 位 No PIE | `ret2csu` | 依次调用 `callme_one/two/three(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d)`，三个函数都返回后才解密 `encrypted_flag.dat` | **0x28**（`rbp-0x20`，链 160 B / 上限 512 B） | `pop rdi;pop rsi;pop rdx=0x40093c`、`callme_one@plt=0x400720`、`callme_two@plt=0x400740`、`callme_three@plt=0x4006f0` |
@@ -1504,6 +1509,46 @@ trigger(i): handlers[i]("triggered")
 
 实测与文档：`labs/lab_unsafe_unlink/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__{unlink_ok}`）。
 
+### 3.L11 `lab_pie_partial_overwrite` → `pie_partial_overwrite`（自造实验）
+
+题目形态：64 位、**PIE**、NX、**无 canary**、Partial RELRO；不碰堆，也不依赖 glibc
+版本（任何 amd64 发行版都能复现，这是本轮"环境无关"选题的理由）。
+
+漏洞（唯一）：`vuln()` 里 `read(0, buf, 0x40 + 8 + 1)`，缓冲区 0x40，多读 9 字节 ——
+8 字节吃掉 saved rbp，第 9 字节正好落在 **saved rip 的最低字节**。
+
+判定依据（为什么不是 ret2text / ret2libc）：
+
+- 溢出只有 1 字节：装不下 ROP 链，也改不了任何参数寄存器；
+- PIE 下基址随机，`objdump` 里的绝对地址全部不可用，而且程序**没有任何输出可用于泄漏基址**；
+- 但 PIE 只随机化**基址**：镜像内部相对布局固定 → 只要跳转目标与返回地址落在
+  同一个 256 字节块（高 7 字节相同），改 LSB 就 100% 命中，不需要爆破。
+
+实测布局（`-O0 -fPIE -pie`，`main` 带 `aligned(256)`）：
+
+| 量 | 值 |
+| --- | --- |
+| `main` | `0x1400`（256 对齐），函数体 `0x5e` 字节 < `0x100` |
+| 返回地址（`call vuln` 下一条） | `main+0x3a = 0x143a` |
+| 目标（`if (never) win_path();` 的 `call`） | `main+0x53 = 0x1453` |
+| payload | `b"A"*0x48 + p8(0x53)`，长度正好 `0x49` |
+
+坑点（实测）：
+
+- `read` 长度是 `0x49`，**必须正好发 `0x49` 字节**：少发 `read` 提前返回（只覆盖一部分，
+  连 saved rbp 都补不全），多发则多余字节留在缓冲里、下次读取错位；
+- 同块是硬约束：`0x143a`/`0x1453` 都在 `0x1400` 块，所以 1 字节就够；**若 `main`
+  超过 `0x100` 字节则必然跨块**，另一种写法是覆盖 1.5 字节 + 1/16 nibble 爆破
+  （本 lab 用 `aligned(256)` + 短函数体把这个不变量变成结构性的）；
+- `-fno-stack-protector` 必须显式给，否则这 1 字节先撞 `__stack_chk_fail`；
+- `-fPIE -pie` 必须显式给，否则退化成普通的 `ret2text`（No PIE 直接写绝对地址）；
+- `never` 声明为 `static volatile int`：`-O0` 下 `if (never)` 不会把分支体优化掉，
+  目标代码一定存在；用 `#if 0` 或 `return` 之后的死代码则可能被删除；
+- exp 不写死偏移：每次用 `objdump -d` 解析 `call vuln` 的下一条指令与 `call win_path`，
+  并断言 `(ret>>8) == (win>>8)`，改 chal.c 后不会静默失效。
+
+实测与文档：`labs/lab_pie_partial_overwrite/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__{pie_partial_ok}`）。
+
 ### 3.31 `write4` → `rop_write_memory`（任意地址写 → 自造字符串）
 
 题目形态：64 位、No PIE、NX、无 canary、Partial RELRO；`pwnme` / `print_file`
@@ -1733,6 +1778,7 @@ stosb                      # 写进 .bss，rdi++
 | （无原始附件，自造） | `labs/lab_fmtstr_read/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L8，fmtstr 只读：`%p` 扫栈 + `%N$s` 读 `secret[]`） |
 | （无原始附件，自造） | `labs/lab_off_by_one/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L9，off-by-one → chunk overlap → tcache poisoning，glibc 2.43） |
 | （无原始附件，自造） | `labs/lab_unsafe_unlink/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L10，unsafe unlink，绕过 2.29+ 双检查，glibc 2.43） |
+| （无原始附件，自造） | `labs/lab_pie_partial_overwrite/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L11，PIE 1 字节局部覆盖 saved RIP，与 glibc 版本无关） |
 | ROP Emporium `write4`（外部下载，`_vendor/ropemporium/write4.zip`） | `rop_write_memory/31_ropemporium_write4_*`、`rop_write_memory/write4`、`rop_write_memory/libwrite4.so`、`rop_write_memory/flag.txt` |
 | ROP Emporium `badchars`（外部下载，`_vendor/ropemporium/badchars.zip`） | `badchars_encoding/32_ropemporium_badchars_*`、`badchars_encoding/badchars`、`badchars_encoding/libbadchars.so`、`badchars_encoding/flag.txt` |
 
@@ -1894,7 +1940,7 @@ handler      @0x40116c：
 
 | 二进制 | 保护 / 形态 | 已知信息 | 结论 / 阻塞点 |
 | --- | --- | --- | --- |
-| `_vendor/tcache_tear` | 64 位、Full RELRO、Canary、NX、No PIE；菜单 add/free/info | `add(size<=0xff)` 后 `readn(chunk, size-0x10)`，`size<0x10` 时长度变成 `size-0x10` 的 32 位负数（**巨量堆写**）；`free` 后不清指针（最多 8 次）；`info` 只回显固定 `.bss` 的 0x20 字节 `name` | **无任何地址泄漏**（分配上限 0xff，进不了 unsorted bin；`.bss` 不邻接堆）→ 需要先绕 tcache double-free key 再把 fd 部分覆盖成 `main_arena` 方向，收益与稳定性都不确定。按 20 分钟规则降级 |
+| `_vendor/tcache_tear` | 64 位、Full RELRO（`0x601d70+0x290=0x602000`，`.bss` 页 RW）、Canary、NX、No PIE；菜单 `malloc/free/info`；`.bss` 布局：`stdout=0x602020`、`name=0x602060`(0x20)、全局指针 `0x602088` | `malloc` 的 `readn(chunk, size-0x10)` 在 `size<0x10` 时变 32 位负数 → `__read_chk(0,n,n)` 通过 → **4GB 读（巨量堆写）**；`free` 永远释放同一个全局指针、最多 8 次、不清指针；`info` 固定 `write(0x602060,0x20)` | **2026-11-26 侦察结论（降级 PENDING）**：① glibc 2.27 **没有 `tcache_entry.key`**（2.29 才加）→ 同一指针 `free()` 两次即 tcache dup，**无需泄漏就能 poison**；② 可行链路：把 `name` 写成 `prev_size`/`size=0x421`（假块 `0x602060`）→ 用 dup 做一次 arb-write 伪造 nextchunk 元数据（`*(0x602488)=0x21`、`*(0x6024a8)=0x21`，否则 `free()` 走到 `unlink_chunk(0x602480)` 崩）→ 再让 `malloc` 返回 `0x602070`（`[0x602088]=0x602070`）→ `free()` 进 unsorted 把 main_arena 写进 `0x602070/78` → `info` 泄漏 libc；③ **卡点：free 次数不够** —— stage-1 最少 5 次（dup 2 + 第二次 dup 2 + 触发 1），stage-2 需 2 次写（`__free_hook=system`、`[0x602088]`→字符串）再 4 次 = **共 9 次 > 上限 8**；唯一能省一次的是 **one_gadget**（省掉字符串写，正好 8 次），但本机无 `one_gadget` 工具，需手搜 2.27 的 `execve("/bin/sh")` gadget。重开时直接从"手搜 one_gadget → 8 次 free 走完"开始，不要重复本轮 25 分钟的 .bss 布局推导 |
 | `_vendor/death_note` | 32 位、EXECSTACK、No PIE；堆 note 管理 | 需要 i386 2.24/2.23（无 tcache）；典型解法是 UAF + shellcode / `__malloc_hook` | 未展开，待做 |
 | pwnable.tw `unexploitable`（外部下载，未入库） | 64 位、No PIE、NX，`read` 栈溢出但**没有可用的 `syscall` gadget** | 试图用 ret2dlresolve 绕过“无 syscall”：手工铺 `Elf64_Rela`/`Elf64_Sym`/字符串 + CSU 两段式 + `leave;ret` 换栈 + `plt0` 重定位，链路本身已跑到 `_dl_fixup` 内部；但 glibc ≥ 2.31 的 version lookup 会用未受控的 `sym index` 去读 `DT_VERSYM`（实测 `0x42af42` 未映射）→ `SIGSEGV` | **负结果：ret2dlresolve 在 amd64 + 现代 glibc 上不可用**（2.24 / 2.27 / 2.43 三个 loader 均复现）。**2026-11-24 补充**：同样思路在 **i386 小二进制 + glibc 2.24** 上可稳定成功（见 §3.L3 / `labs/lab_ret2dlresolve_i386`），原因是越界的 `versym[symidx]` 仍落在已映射的 `.bss`/`.data` 上读到 0 |
 
@@ -2017,5 +2063,35 @@ python tools/repro_audit.py L9 L10  # 两题的编译/二进制/环境变量/文
 ```
 
 附件备份：无（自造，源码在 `labs/lab_{off_by_one,unsafe_unlink}/src/`，`chal` 由 `make` 生成）。
+
+### 5.12 2026-11-26 新增自造靶场（`pie_partial_overwrite`，已解决）+ `tcache_tear` 降级结论
+
+本轮先按原计划攻 `_vendor/tcache_tear`，25 分钟侦察后**判定不可在 free 上限内完成**，
+于是按 20 分钟规则降级（结论已写进 §5.6 的 `tcache_tear` 行，含完整链路与卡点，
+重开时直接读那一行即可，不要重新推导），随后改做**与环境无关**的新题型：
+
+1. **`L11_lab_pie_partial_overwrite`**：选它的三条理由 —— ① 仓库 23 类里没有
+   "PIE 局部覆盖"这一型（`ret2text` 要求 No PIE / 有基址泄漏）；② 不碰 glibc
+   分配器，**不受 2.43 语义变化影响**（对照 §5.11 的 fastbin 教训）；
+   ③ 1 字节覆盖 + 同 256 字节块是可结构性保证的（`aligned(256)` + 短函数体），
+   不需要爆破，能稳定进 `verify_all.sh`。
+   实测：`main=0x1400`、返回地址 `0x143a`、目标 `0x1453`、payload `b"A"*0x48 + p8(0x53)`。
+2. **`_vendor/tcache_tear` 的降级理由（摘要）**：glibc 2.27 没有 `tcache_entry.key`，
+   所以"同一指针 free 两次 = tcache dup"成立，理论上可做
+   "伪造 `.bss` 假块 → 进 unsorted → `info` 泄漏 main_arena → `__free_hook`"；
+   但 **free 上限 8 次**，stage-1 最少 5 次、stage-2 需 4 次，共 9 次 → 差 1 次。
+   唯一能省一次的是 one_gadget（正好 8 次），本机无 `one_gadget` 工具。
+   **这是"计数约束"型卡点，不是理解不足**，所以不再限时死磕。
+
+复现：
+
+```bash
+cd '/home/yfhd5/Pwn_Writeups'
+source .venv/bin/activate
+bash tools/verify_all.sh L11        # 期望 PASS=1 FAIL=0 SKIP=0
+python tools/repro_audit.py L11     # 编译/二进制/环境变量/文档块全部通过
+```
+
+附件备份：无（自造，源码在 `labs/lab_pie_partial_overwrite/src/`，`chal` 由 `make` 生成）。
 
 
