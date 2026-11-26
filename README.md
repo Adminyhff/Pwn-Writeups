@@ -1,4 +1,4 @@
-*"Started in Nov, Freshman Year. Goal: Top 100 on BUUCTF Pwn Leaderboard. Solo. No teams."*
+
 
 ## Environment
 - OS: WSL2 Ubuntu
