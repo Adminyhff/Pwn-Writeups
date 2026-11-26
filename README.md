@@ -1,11 +1,29 @@
+# Pwn Writeups · 24 类利用原语的速查与复现仓库
 
+栈溢出 / 堆利用 / 格式化字符串 / ROP / FSOP / seccomp —— 44 道题按**利用原语**归档而不是按赛事；
+每题都有能直接跑的 EXP、`speedrun` 式速查笔记，外加 11 个自造靶场补齐真实赛题里缺的题型。
 
-## Environment
+![patterns](https://img.shields.io/badge/patterns-24-blue)
+![cases](https://img.shields.io/badge/cases-44-success)
+![verify_all](https://img.shields.io/badge/verify__all-23%20PASS%20%7C%201%20SKIP-success)
+![repro_audit](https://img.shields.io/badge/repro__audit-0%20doc%20gaps-success)
+![labs](https://img.shields.io/badge/self--made%20labs-11-purple)
+![glibc](https://img.shields.io/badge/host%20glibc-2.43-informational)
+
+> `24` 类题型 · `44` 道可复现题 · `PASS=23 / FAIL=0 / SKIP=1` · 文档缺口 `0` · 自造靶场 `11` 个（L1–L11）
+> —— 徽章与本行等价，**离线/代理不通时以本行为准**。
+
+> **怎么读这个仓库**：先看下面的 **Pattern Index** 找到题型 → 进模式目录读该题的 `*_speedrun.md`
+> （2 分钟速查：怎么定性、关键偏移、坑点）→ 跑 `*_exp.py` 复现。
+> 想确认"整套现在还能不能跑"，直接 `bash tools/verify_all.sh`，期望最后一行 `PASS=23 FAIL=0 SKIP=1`。
+> 做不出来的题不硬凑题型，全部收在 [`_pending/`](_pending/README.md) 并留侦察记录。
+
+## 🧰 Environment
 - OS: WSL2 Ubuntu
 - Toolchain: GCC, GDB + pwndbg, pwntools
 - Python Virtual Environment: `.venv`
 
-## Repository Layout
+## 🗂 Repository Layout
 
 本仓库按 **题型模式特征（pattern）** 组织，而不是按单道题目建文件夹。
 同一模式下的题目文件统一放在以该模式命名的目录中，文件名使用 `<题号>_<题目名>_<类型>` 前缀避免冲突。
@@ -204,7 +222,7 @@ Pwn_Writeups/
     └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
 
-## Pattern Index
+## 🧭 Pattern Index
 
 | 模式目录 | 共同模式特征 | 包含题目 |
 | --- | --- | --- |
@@ -235,7 +253,7 @@ Pwn_Writeups/
 
 逐题的判定依据、偏移、目标地址与关键坑点见 [PATTERN_CLASSIFICATION.md](PATTERN_CLASSIFICATION.md)。
 
-### Pending 档案（不计入上面的 24 类）
+### ⏸ Pending 档案（不计入上面的 24 类）
 
 未解 / 未展开的题统一收进 [`_pending/`](_pending/README.md)，只留“侦察到什么、卡在哪、下一步怎么走”，
 重开时不必重新推导。它们**不进入** `tools/verify_all.sh`，也**不计入** 44 题可复现矩阵。
@@ -247,8 +265,9 @@ Pwn_Writeups/
 | 26 | `card` | `heap_exploitation` | glibc 2.27 下 `__free_hook` 写入后 `free()` 不触发（stage-1 libc 泄漏已通） | `heap_exploitation/26_card_speedrun(pending).md` |
 | — | `_vendor/tcache_tear` | `tcache_poisoning` | 2.27 无 `tcache_entry.key`，但 free 上限 8 次 < 链路需要的 9 次 | `PATTERN_CLASSIFICATION.md` §5.6 |
 | — | `_vendor/death_note` | `heap_uaf` + `ret2shellcode` | 需要 i386 2.24/2.23（无 tcache）环境 | `PATTERN_CLASSIFICATION.md` §5.6 |
+| —（未入库） | pwnable.tw `unexploitable` | `ret2dlresolve` | amd64 现代 glibc 上 `ret2dlresolve` 不可用（负结果，已定论） | `PATTERN_CLASSIFICATION.md` §5.6 |
 
-## File Conventions
+## 📐 File Conventions
 
 - `*_speedrun.md` : 2 分钟速通笔记，强调定性质、关键偏移、坑点与识别卡。
 - `*_writeup.md` : 深入分析内存布局、控制流与绕过策略。
@@ -256,7 +275,28 @@ Pwn_Writeups/
 - 无前缀的 ELF 文件 : 题目原始二进制，保留原始文件名，便于 `file` / `checksec` / `objdump` 直接使用。
 - 每个模式目录的 `README.md` 汇总该模式的共同特征、题目差异与运行方式。
 
-## Quick Start
+## 🚀 Quick Start
+
+### 三步上手（整套回归）
+
+```bash
+git clone https://github.com/Adminyhff/Pwn_Writeups.git
+cd Pwn_Writeups
+
+# 首次：建虚拟环境 + 装依赖（已有 .venv 就跳过这一行）
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+source .venv/bin/activate
+
+bash tools/verify_all.sh          # 期望最后一行：PASS=23 FAIL=0 SKIP=1
+```
+
+`verify_all.sh` 会把每题日志写到 `/tmp/verify_all/<题号>.log`；缺前置的题打印 `SKIP`（附原因）
+而不是 `FAIL`。只想抽查就点名，例如 `bash tools/verify_all.sh 27 30 32`。
+
+### 逐题运行清单
+
+全部 44 题的本地跑法，每题一行注释说明该题的特征。32 位题需要先准备 i386 loader
+（见下文「32 位题的公共前置」）；`LOCAL` 参数让 EXP 走 `process()` 而不是远程 socket。
 
 ```bash
 cd '/home/yfhd5/Pwn_Writeups'
@@ -447,7 +487,18 @@ python exp.py
 
 ---
 
-## 复现自检（01–34 + L1–L11，2026-11-26）
+## ✅ 复现自检（01–34 + L1–L11，2026-11-26）
+
+先看仓库级健康度（口径与命令都在下面各节，数字均为 2026-11-26 实测）：
+
+| 指标 | 门槛 | 实测 | 结论 |
+| --- | --- | --- | --- |
+| 题型数（已冻结） | 24 类 | `PATTERN_CLASSIFICATION.md` §1 表 24 行 == 本文件 Pattern Index 24 行 | ✅ 一致 |
+| 可复现题数 | 44 道 | 33 个编号题（01–34，26 转 PENDING 不计）+ 11 个 lab（L1–L11） | ✅ |
+| 静态审计文档缺口 | 0 | `python tools/repro_audit.py` → 共 44 题 / 缺口 0 | ✅ |
+| 实跑矩阵 | FAIL=0 | `bash tools/verify_all.sh` → PASS=23 / FAIL=0 / SKIP=1 | ✅（SKIP=26，PENDING） |
+| 未解档案 | 留下记录 | `_pending/` 6 条（35 / 36 / 26 / `tcache_tear` / `death_note` / `unexploitable`） | ✅ |
+| 外部依赖 | 可重建 | 2.24 / 2.27 / i386 loader 都给了重建命令，缺前置只 SKIP | ✅ |
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
@@ -498,6 +549,8 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 > 若 `python xx_exp.py LOCAL` 报 `FileNotFoundError: './xxx'`，先怀疑 **32 位 loader 缺失**
 > （ELF 的 `interp` 不存在），而不是二进制丢了。
 
+### 📋 静态审计明细（44 题，`tools/repro_audit.py --md` 生成）
+
 | 题 | 脚本 | 二进制（同目录） | 依赖环境变量 | 文档补齐 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | 01 | `01_test_your_nc_exp.py` | — | — | ✅ | OK;远程HOST写死(靶机已下线) |
@@ -533,86 +586,7 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
 | 31 | `31_ropemporium_write4_exp.py` | ./write4（+ `libwrite4.so`） | HOST, PORT | ✅ | 实跑 1/1（rop_write_memory，输出 `ROPE{...}`） |
 | 32 | `32_ropemporium_badchars_exp.py` | ./badchars（+ `libbadchars.so`） | HOST, PORT | ✅ | 实跑 1/1（badchars_encoding，输出 `ROPE{...}`） |
 
-审计结论（本次实际补齐的内容已写回各题文档）：
-
-- **32 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
-- **2026-11-25 新增 2 个题型 / 2 个 case**（都是 ROP Emporium 官方附件，非自造）：
-  `31_ropemporium_write4`（`rop_write_memory`：`mov [r14],r15` 把 `"flag.txt"`
-  写进 `.data`）与 `32_ropemporium_badchars`（`badchars_encoding`：坏字符
-  `x g a .` 下写密文 + `xor byte ptr [r15], r14b` 原地解码）。
-  附件 zip 已备份到 `_vendor/ropemporium/`（`write4.zip` sha256 `3925c857…`、
-  `badchars.zip` sha256 `f6e8d54c…`），逐文件 sha256 见 `_vendor/attach_manifest.md`。
-  题型分类 **十七类 → 十九类**。
-- **2026-11-25 晚第二次新增 2 个题型 / 2 个 case**（都是自造 lab，见
-  `PATTERN_CLASSIFICATION.md` §3.L7 / §3.L8）：`L7_lab_double_free`（`double_free`：
-  `free` 前 `memset` 把 `tcache_entry.key` 清掉 → tcache 成环 → 改 `next` 落 `.bss`
-  函数指针）与 `L8_lab_fmtstr_read`（`format_string_read`：唯一漏洞是 `printf(buf)`，
-  用 `%p` 扫栈 + `%N$s` 读 `puts@got` 与 `secret[]`，无 `%n`）。题型分类 **十九类 → 二十一类**。
-- **2026-11-26 新增 2 个题型 / 2 个 case**（自造 lab，见 `PATTERN_CLASSIFICATION.md`
-  §3.L9 / §3.L10）：`L9_lab_off_by_one`（`off_by_one`：`read` 多 1 字节改掉相邻
-  chunk 的 size LSB → 0x30 的块 free 进 `tcache[0x60]` → 取回时覆盖后块头部 =
-  chunk overlap → safe-linking tcache poisoning）与 `L10_lab_unsafe_unlink`
-  （`unsafe_unlink`：多写 8 字节伪造 `prev_size`/`size` → `free` 触发向后合并 →
-  用“指向自己的全局槽位”同时骗过 2.29+ 的两道 unlink 检查）。
-  **原计划的 fastbin attack 取消**：host glibc 2.43 已移除 fastbin
-  （`strings libc.so.6 | grep -c 'memory corruption (fast)'` → `0`，
-  free 20 个 0x20 块后 dump heap 无任何块进 fastbin 链），见 `lab_unsafe_unlink/README.md` §0。
-  题型分类 **二十一类 → 二十三类**。
-- **2026-11-26 第二轮新增 1 个题型 / 1 个 case**（自造 lab，见 `PATTERN_CLASSIFICATION.md`
-  §3.L11 / §5.12）：`L11_lab_pie_partial_overwrite`（`pie_partial_overwrite`：PIE 下
-  溢出只够覆盖 saved RIP 的最低 1 字节、且没有任何泄漏点 → 靠“页内偏移固定”把
-  返回地址改到**同一个 256 字节块**内的 win 分支；`main` 用 `aligned(256)` + 短函数体
-  把这个不变量变成结构性的，所以 1 字节覆盖 100% 命中、不需要 nibble 爆破；
-  exp 用 `objdump` 自动解析两个地址并断言同块）。选这个题型的原因是不碰 glibc
-  分配器，**不受 2.43 语义变化影响**（对照 L10 的 fastbin 教训）。
-  **`_vendor/tcache_tear` 按 20 分钟规则降级 PENDING**：glibc 2.27 没有
-  `tcache_entry.key`，所以"同一指针 free 两次 = tcache dup"成立，理论上可以
-  "伪造 `.bss` 假块 → 进 unsorted → `info` 泄漏 main_arena → `__free_hook`"；
-  但 `free` 上限是 8 次，stage-1 最少 5 次、stage-2 需 4 次，共 9 次——**差 1 次**，
-  唯一能省一次的是 one_gadget（本机无该工具）。完整链路、地址布局与重开步骤
-  见 `PATTERN_CLASSIFICATION.md` §5.6 的 `tcache_tear` 行与 §5.12。
-  题型分类 **二十三类 → 二十四类**。
-- **2026-11-26 第三轮：题型冻结 + 全仓库整理**（**不新增题型**，口径仍是 24 类 / 44 题）：
-  顶层 `To Be Continued/` **解散**，两道未解题带完整侦察档案移入 `_pending/`：
-  `35_judgement_mna_2016`（i386 格式化字符串，`isprint` 过滤挡住地址注入）与
-  `36_publibc_bf`（PIE tape 解释器），各带 `recon.md`，索引见 `_pending/README.md`。
-  其中 `bf` 的旧结论被**更正**：**不是**“需 hook / FSOP”——二进制里存在**无调用点/无跳表引用的后门**
-  `0x19d8: system("/bin/sh")`（字符串 `@0x2120`），Full RELRO 排除改 GOT、canary 排除栈溢出、
-  `add` 只覆盖单一全局指针（无 free/show → 无 UAF），所以**真正缺的是一个 RIP 控制点**；
-  下一步按 L11 的思路找“与 `0x19d8` 同 256 字节块”的可 1 字节覆盖的返回地址。
-  同时 `tcache_tear` / `death_note` / `26_card` 的 PENDING 状态统一登记到
-  `_pending/README.md`，`_vendor/attach_manifest.md` 同步（不再写“待做”）。
-  校验：`bash tools/verify_all.sh` → `PASS=23 FAIL=0 SKIP=1`（与上一轮完全一致），
-  `python tools/repro_audit.py` → 44 题 / 0 文档缺口（`_pending/` 不参与扫描）。
-- **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
-  `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
-  （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。
-- 顺带修掉两个**复现性缺陷**（都影响矩阵可信度）：
-  - `22` 的 leak 解析：`puts(foothold@got)` 输出的是**原始地址字节**，遇 `0x00` 会截断、
-    且字节里可能含 `0x0a`；原脚本用 `recvline()` 抓，约 2/5 概率算错基址。
-    改为“读到下一个 banner 为止 + 校验 `libpivot & 0xFFF`，不对就重开一局”，连跑 20/20 通过。
-  - `23` 的 loader 解析：原脚本写死 `/tmp/libc32/...`，本机不存在时直接
-    `FileNotFoundError`；`verify_all.sh` 现在按 `/tmp/libc32*` → `/tmp/libc224i32`
-    顺序自动探测 i386 loader 并用 `I386_LD/I386_LIBPATH` 启动。
-- `26` 已 **PENDING（2026-11-26 主动放弃）**：2.27 的 loader/libc 本机已备好
-  （`/tmp/libc227`），二进制能启动、stage-1 的 libc 泄漏也已跑通，但 `__free_hook` 写入后
-  `free()` 不触发 hook；不再实跑，见 `heap_exploitation/26_card_speedrun(pending).md` §10。
-- 新归档的 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）；
-  **29**（2026-11-24 新增，FSOP 模式）同样实跑 3/3。
-- **01–04** 的 EXP 只有远程分支且 `HOST` 已下线：文档已加提示，本地按
-  `process('./<bin>')` 复跑（`test_your_nc` / `rip` / `warmup_csaw_2016` / `ciscn_2019_n_1` 都在库）。
-  **05** 的 EXP 自带 `LOCAL` 分支，可直接
-  `python 05_get_started_3dsctf_2016_exp.py LOCAL` 验证 `get_flag` 分支。
-- **19** 补了 `SSL=1`（TLS 平台）；**23** 补了 `make_local_exec.py` + i386 loader 的复跑命令。
-- 全局修正：文档里 i386 loader 原写作 `/tmp/libc32/root/usr/lib32`，本机实际是
-  `/tmp/libc32/root/usr/lib/i386-linux-gnu`（`libc6:i386` deb）；已批量替换并补了
-  `find` 自查法。23 的 EXP 默认值、19 的 `LIBC` 推导也同步改为“以 `I386_LD` 同目录为准”。
-- 实跑抽查（2026-11-23，本机 glibc）：`05`、`12`、`19`、`22`、`23`、`24` 全部通过，
-  分别为 `flag{LOCAL_SMOKE}`、`flag{smoke12}`、`flag{SILVER_LOCAL}`、
-  `__PWNED__{pivot_local_ok}`、`__PWNED__{orw_local_ok}`、`__PWNED__{easyroptocol_local_ok}`。
-- 审计只证明“静态可复现”；逻辑是否仍成功以各题 `speedrun.md` 的实测输出为准。
-
-### 本地实跑矩阵（`tools/verify_all.sh`）
+### 🧪 本地实跑矩阵（`tools/verify_all.sh`）
 
 静态审计证明“文件齐、能编译、文档写了怎么跑”，实跑矩阵进一步证明“按文档真能跑通”。
 每题跑一次 smoke test，成功与否用输出里的固定字符串判定：
@@ -667,3 +641,95 @@ bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/veri
 > ② `activate` 里的 `VIRTUAL_ENV` 是写死路径，目录改名/移动会让 venv 静默失效
 > （表现为 `which python` 落回 `/usr/bin/python3`、`import pwn` 失败）；现已改成自解析，
 > 但仍建议不要给仓库路径加空格。顺带一提，`LD_PRELOAD` 也按空格分库（见上一条）。
+
+## 📋 变更日志（审计结论 + 逐轮记录）
+
+审计结论（本次实际补齐的内容已写回各题文档）：
+
+- **32 个 EXP 全部可编译**；文档缺口 **0**；无 TODO/占位符。
+- **2026-11-25 新增 2 个题型 / 2 个 case**（都是 ROP Emporium 官方附件，非自造）：
+  `31_ropemporium_write4`（`rop_write_memory`：`mov [r14],r15` 把 `"flag.txt"`
+  写进 `.data`）与 `32_ropemporium_badchars`（`badchars_encoding`：坏字符
+  `x g a .` 下写密文 + `xor byte ptr [r15], r14b` 原地解码）。
+  附件 zip 已备份到 `_vendor/ropemporium/`（`write4.zip` sha256 `3925c857…`、
+  `badchars.zip` sha256 `f6e8d54c…`），逐文件 sha256 见 `_vendor/attach_manifest.md`。
+  题型分类 **十七类 → 十九类**。
+- **2026-11-25 晚第二次新增 2 个题型 / 2 个 case**（都是自造 lab，见
+  `PATTERN_CLASSIFICATION.md` §3.L7 / §3.L8）：`L7_lab_double_free`（`double_free`：
+  `free` 前 `memset` 把 `tcache_entry.key` 清掉 → tcache 成环 → 改 `next` 落 `.bss`
+  函数指针）与 `L8_lab_fmtstr_read`（`format_string_read`：唯一漏洞是 `printf(buf)`，
+  用 `%p` 扫栈 + `%N$s` 读 `puts@got` 与 `secret[]`，无 `%n`）。题型分类 **十九类 → 二十一类**。
+- **2026-11-26 新增 2 个题型 / 2 个 case**（自造 lab，见 `PATTERN_CLASSIFICATION.md`
+  §3.L9 / §3.L10）：`L9_lab_off_by_one`（`off_by_one`：`read` 多 1 字节改掉相邻
+  chunk 的 size LSB → 0x30 的块 free 进 `tcache[0x60]` → 取回时覆盖后块头部 =
+  chunk overlap → safe-linking tcache poisoning）与 `L10_lab_unsafe_unlink`
+  （`unsafe_unlink`：多写 8 字节伪造 `prev_size`/`size` → `free` 触发向后合并 →
+  用“指向自己的全局槽位”同时骗过 2.29+ 的两道 unlink 检查）。
+  **原计划的 fastbin attack 取消**：host glibc 2.43 已移除 fastbin
+  （`strings libc.so.6 | grep -c 'memory corruption (fast)'` → `0`，
+  free 20 个 0x20 块后 dump heap 无任何块进 fastbin 链），见 `lab_unsafe_unlink/README.md` §0。
+  题型分类 **二十一类 → 二十三类**。
+- **2026-11-26 第二轮新增 1 个题型 / 1 个 case**（自造 lab，见 `PATTERN_CLASSIFICATION.md`
+  §3.L11 / §5.12）：`L11_lab_pie_partial_overwrite`（`pie_partial_overwrite`：PIE 下
+  溢出只够覆盖 saved RIP 的最低 1 字节、且没有任何泄漏点 → 靠“页内偏移固定”把
+  返回地址改到**同一个 256 字节块**内的 win 分支；`main` 用 `aligned(256)` + 短函数体
+  把这个不变量变成结构性的，所以 1 字节覆盖 100% 命中、不需要 nibble 爆破；
+  exp 用 `objdump` 自动解析两个地址并断言同块）。选这个题型的原因是不碰 glibc
+  分配器，**不受 2.43 语义变化影响**（对照 L10 的 fastbin 教训）。
+  **`_vendor/tcache_tear` 按 20 分钟规则降级 PENDING**：glibc 2.27 没有
+  `tcache_entry.key`，所以"同一指针 free 两次 = tcache dup"成立，理论上可以
+  "伪造 `.bss` 假块 → 进 unsorted → `info` 泄漏 main_arena → `__free_hook`"；
+  但 `free` 上限是 8 次，stage-1 最少 5 次、stage-2 需 4 次，共 9 次——**差 1 次**，
+  唯一能省一次的是 one_gadget（本机无该工具）。完整链路、地址布局与重开步骤
+  见 `PATTERN_CLASSIFICATION.md` §5.6 的 `tcache_tear` 行与 §5.12。
+  题型分类 **二十三类 → 二十四类**。
+- **2026-11-26 第三轮：题型冻结 + 全仓库整理**（**不新增题型**，口径仍是 24 类 / 44 题）：
+  顶层 `To Be Continued/` **解散**，两道未解题带完整侦察档案移入 `_pending/`：
+  `35_judgement_mna_2016`（i386 格式化字符串，`isprint` 过滤挡住地址注入）与
+  `36_publibc_bf`（PIE tape 解释器），各带 `recon.md`，索引见 `_pending/README.md`。
+  其中 `bf` 的旧结论被**更正**：**不是**“需 hook / FSOP”——二进制里存在**无调用点/无跳表引用的后门**
+  `0x19d8: system("/bin/sh")`（字符串 `@0x2120`），Full RELRO 排除改 GOT、canary 排除栈溢出、
+  `add` 只覆盖单一全局指针（无 free/show → 无 UAF），所以**真正缺的是一个 RIP 控制点**；
+  下一步按 L11 的思路找“与 `0x19d8` 同 256 字节块”的可 1 字节覆盖的返回地址。
+  同时 `tcache_tear` / `death_note` / `26_card` 的 PENDING 状态统一登记到
+  `_pending/README.md`，`_vendor/attach_manifest.md` 同步（不再写“待做”）。
+  校验：`bash tools/verify_all.sh` → `PASS=23 FAIL=0 SKIP=1`（与上一轮完全一致），
+  `python tools/repro_audit.py` → 44 题 / 0 文档缺口（`_pending/` 不参与扫描）。
+- **2026-11-26 第四轮：README 首屏与可读性润色**（只动 `README.md`，不改任何题目/脚本/脚本口径）：
+  参照一份优秀产品 README 的**结构**（首屏定位 → 一行概览 → 指标徽章 → 指标表 → 单块 Quickstart），
+  补上本仓库原先缺的**一级标题 + 三行概览**，加了 6 个**数据全为实测**的静态徽章
+  （patterns / cases / verify_all / repro_audit / labs / host glibc），并附一行**离线等价的纯文本指标**；
+  章节标题加少量图标便于扫读；Quick Start 拆成「三步上手（整套回归）」+「逐题运行清单」；
+  复现自检节前置一张「指标 | 门槛 | 实测 | 结论」健康度表（与实跑矩阵同源，不引入新数字）；
+  同时把「静态审计明细」表与「本地实跑矩阵」各自补标题，并把变更日志提为独立一级分节（纯移动，不删内容）。
+  **刻意不学的**：ASCII art 大横幅（对 diff/终端不友好）、虚构性能或评分、无依据的
+  Stars / License / Contributors 徽章（本仓库没有 `LICENSE` 文件）、大段营销文案 —— 保持技术笔记口径。
+  校验：`python tools/repro_audit.py` 仍 44 题 / 0 缺口（README 不在审计扫描范围），
+  `bash tools/verify_all.sh` 不受影响仍 `PASS=23`。
+- **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
+  `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
+  （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。
+- 顺带修掉两个**复现性缺陷**（都影响矩阵可信度）：
+  - `22` 的 leak 解析：`puts(foothold@got)` 输出的是**原始地址字节**，遇 `0x00` 会截断、
+    且字节里可能含 `0x0a`；原脚本用 `recvline()` 抓，约 2/5 概率算错基址。
+    改为“读到下一个 banner 为止 + 校验 `libpivot & 0xFFF`，不对就重开一局”，连跑 20/20 通过。
+  - `23` 的 loader 解析：原脚本写死 `/tmp/libc32/...`，本机不存在时直接
+    `FileNotFoundError`；`verify_all.sh` 现在按 `/tmp/libc32*` → `/tmp/libc224i32`
+    顺序自动探测 i386 loader 并用 `I386_LD/I386_LIBPATH` 启动。
+- `26` 已 **PENDING（2026-11-26 主动放弃）**：2.27 的 loader/libc 本机已备好
+  （`/tmp/libc227`），二进制能启动、stage-1 的 libc 泄漏也已跑通，但 `__free_hook` 写入后
+  `free()` 不触发 hook；不再实跑，见 `heap_exploitation/26_card_speedrun(pending).md` §10。
+- 新归档的 27 / 28 均在本地实跑 3 次全通过（见下面「本地实跑矩阵」）；
+  **29**（2026-11-24 新增，FSOP 模式）同样实跑 3/3。
+- **01–04** 的 EXP 只有远程分支且 `HOST` 已下线：文档已加提示，本地按
+  `process('./<bin>')` 复跑（`test_your_nc` / `rip` / `warmup_csaw_2016` / `ciscn_2019_n_1` 都在库）。
+  **05** 的 EXP 自带 `LOCAL` 分支，可直接
+  `python 05_get_started_3dsctf_2016_exp.py LOCAL` 验证 `get_flag` 分支。
+- **19** 补了 `SSL=1`（TLS 平台）；**23** 补了 `make_local_exec.py` + i386 loader 的复跑命令。
+- 全局修正：文档里 i386 loader 原写作 `/tmp/libc32/root/usr/lib32`，本机实际是
+  `/tmp/libc32/root/usr/lib/i386-linux-gnu`（`libc6:i386` deb）；已批量替换并补了
+  `find` 自查法。23 的 EXP 默认值、19 的 `LIBC` 推导也同步改为“以 `I386_LD` 同目录为准”。
+- 实跑抽查（2026-11-23，本机 glibc）：`05`、`12`、`19`、`22`、`23`、`24` 全部通过，
+  分别为 `flag{LOCAL_SMOKE}`、`flag{smoke12}`、`flag{SILVER_LOCAL}`、
+  `__PWNED__{pivot_local_ok}`、`__PWNED__{orw_local_ok}`、`__PWNED__{easyroptocol_local_ok}`。
+- 审计只证明“静态可复现”；逻辑是否仍成功以各题 `speedrun.md` 的实测输出为准。
