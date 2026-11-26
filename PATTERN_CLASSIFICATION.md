@@ -126,6 +126,8 @@
 | L6 | `lab_heap_uaf`（自造） | 函数指针 UAF / 64 位（glibc 2.43） | `heap_uaf` | `struct note {data, fn}`，`free` 只释放不清空；data(0x18→0x20 chunk) 与 struct(0x20 chunk) 同 size class，两次 free 后 tcache 为 `S1,C,S0,A`，下一个 `add` 的 data 正好盖住旧 `struct note` → 改 `fn=backdoor` → `show(stale)` | N/A（堆） | `backdoor=0x401256`、tcache LIFO 顺序 `S1,C,S0,A`、`read_int` 必须逐字节读 |
 | L7 | `lab_double_free`（自造） | tcache double free / 绕过 2.29+ key 检测 / 64 位（glibc 2.43） | `double_free` | `secure_free()` 在 `free` 前 `memset(p,0,n)` 把 `tcache_entry.key` 抹掉 → `del(0);del(1);del(0)` 三次都过检测，tcache 成环 `c0→c1→c0`；`show` 读已释放 chunk 得 `c0>>12`（safe-linking key）；第一次取 c0 时改写其 `next` → 第 4 次 `malloc` 落 `.bss` 的 `handlers[]` → `trigger` | N/A（堆） | `handlers=0x4041a0`(16 对齐)、`win=0x4012df`、不 memset 必 `free(): double free detected in tcache 2` |
 | L8 | `lab_fmtstr_read`（自造） | 格式化字符串**只读** / 64 位（glibc 2.43） | `format_string_read` | 唯一漏洞 `printf(buf)`，无 `%n`：`MARKMARK`+`%p` 扫栈得 canary / libc 指针并定位 `k=8` → `%{k+2}$s` 读 `puts@got`（页对齐校验得 libc base）→ 同法读 `.bss` 的 `secret[]` 拿 flag；协议是 `u32 长度 + 定长 payload`（二进制安全） | 0（无栈溢出；canary 只是素材） | `secret=0x404080`、`puts@got=0x404000`、目标地址必须放格式串**后面**（否则 `0x00` 截断） |
+| L9 | `lab_off_by_one`（自造） | off-by-one → chunk overlap / safe-linking / 64 位（glibc 2.43） | `off_by_one` | `edit` 用 `read(0,p,sizes[i]+1)` 多读 1 字节 → 把相邻 0x30 chunk 的 size `0x31` 改成 `0x61` → `free` 进 `tcache[0x60]` → `malloc(0x58)` 取回时覆盖后块头部（chunk overlap）→ `show` 泄漏 `chunk>>12` → 改 `next` 让 `malloc` 落 `.bss` 的 `handlers[]` → `trigger` | 0（堆，纯 LSB 改写） | `handlers=0x4041a0`(16 对齐)、`win=0x4012bf`、偏移必须按物理布局 `chunk1.user+0x20` 算（按名义 size 会 `unaligned tcache chunk`） |
+| L10 | `lab_unsafe_unlink`（自造） | unsafe unlink / 绕过 2.29+ 双检查 / 64 位（glibc 2.43） | `unsafe_unlink` | `edit` 多写 8 字节改相邻 chunk 的 `prev_size`/`size`（清 `PREV_INUSE`）→ `free` 触发向后合并 → 伪块取 `P=a.user`（`prev_size=0xf0`），`P->fd/bk` 指向 `&slots[0]∓` → `chunksize(P)==prev_size` 与 `FD->bk==BK->fd==P` 同时通过 → `slots[0]` 被改写成 `.bss` 附近 → 改 `handlers[0]=win` | 0（堆） | **glibc 2.43 的 tcache 上限是 16**（填 7 个不够，`free(a)` 仍进 tcache）、a 必须在 `slots[0]`、`slots[]` 存 user 指针所以要 `prev_size=0xf0` 而非 `0x100` |
 | 31 | `ROP Emporium write4` | 任意地址写 → 自造 `"flag.txt"` / 64 位 No PIE | `rop_write_memory` | `mov qword ptr [r14], r15 ; ret` 把 8 字节字符串写进 `.data`；`print_file@plt` 的参数是字符串地址 | **0x28**（`pwnme` 的 `rbp-0x20`，`read` 上限 0x200） | `pop r14;pop r15;ret=0x400690`、`mov [r14],r15;ret=0x400628`、`pop rdi;ret=0x400693`、`print_file@plt=0x400510`、`.data=0x601028` |
 | 32 | `ROP Emporium badchars` | 坏字符过滤 → 编码规避 / 64 位 No PIE | `badchars_encoding` | 坏字符 `x g a .`：`"flag.txt"` 先 `^2` 成 `"dnce,vzv"` 写入 `.data`，再 8 次 `xor byte ptr [r15], r14b` 原地解码；解码地址从 `0x601030` 起（`0x60102e` 会撞 `.`） | **0x28**（`rbp-0x20`，payload 368 B / 上限 512 B） | `pop r12..r15=0x40069c`、`mov [r13],r12=0x400634`、`pop r14;pop r15=0x4006a0`、`xor [r15],r14b=0x400628`、`pop rdi=0x4006a3`、`print_file@plt=0x400510` |
 | 33 | `ROP Emporium callme` | 链式多函数调用 / 64 位 No PIE | `ret2csu` | 依次调用 `callme_one/two/three(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d)`，三个函数都返回后才解密 `encrypted_flag.dat` | **0x28**（`rbp-0x20`，链 160 B / 上限 512 B） | `pop rdi;pop rsi;pop rdx=0x40093c`、`callme_one@plt=0x400720`、`callme_two@plt=0x400740`、`callme_three@plt=0x4006f0` |
@@ -1403,6 +1405,87 @@ loop: read_n(&len,4); read_n(buf,len); buf[len]=0;
 
 实测与文档：`labs/lab_fmtstr_read/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__`）。
 
+### 3.L9 `lab_off_by_one` → `off_by_one`（自造实验）
+
+为什么造这个 lab：`off-by-one` 是现实二进制里最常见的堆 bug 之一，但仓库里的
+heap 题（15/16/26）都不是"只差一个字节"；本 lab 把最常见的形态
+（`read(0, p, size + 1)`）做成最小闭环，并顺带证明 26 里那个"改相邻 size
+做 overlap"的原语在干净环境下完全可行。
+
+程序逻辑（`labs/lab_off_by_one/src/chal.c`）：
+
+```text
+add(i):  malloc(size); read(0, p, size)          /* 定长读 */
+edit(i): read(0, cards[i], sizes[i] + 1)         /* ← 唯一漏洞：多 1 字节 */
+del(i):  free(cards[i]); 不清 cards[]/sizes[]     /* show 可读已释放块 */
+show(i): write(1, cards[i], sizes[i])
+trigger(i): handlers[i]("triggered")
+```
+
+判定依据（实测）：
+
+- 4 个 0x30 chunk；`edit(0, 'A'*0x28 + '\x61')` 把 chunk1.size 由 `0x31` 改成 `0x61`；
+- `free(1)` 时 `chunksize=0x60`，`nextchunk = chunk1 + 0x60` 正好落在 chunk3 上
+  （chunk3 必须是真实块，否则 `_int_free` 的 next-chunk 检查直接 abort）；
+- `free(2)` 后 `show(2, 8)` 得到 `chunk2 >> 12 = page`（safe-linking key，实测 `0x314ca` 一类页号）；
+- `add(4, 0x58)` 取回 chunk1，写满 0x58 字节即越过 chunk2 的头：
+  `+0x20 prev_size / +0x28 size / +0x30 next`；
+- `add(5)` 弹出 chunk2（tcache 头变成 `&handlers`），`add(6)` 落到 `.bss` 写 `handlers[0] = win`。
+
+坑点（实测）：
+
+- **偏移不能用"名义 size"推**：chunk1 被改成 0x61 只是标记，物理布局仍是 0x30，
+  所以 chunk2 的头在 `chunk1.user + 0x20`；按 `+0x30` 写会把 chunk2.size 写成
+  `0x5050…`，稳现 `malloc(): unaligned tcache chunk detected`（泄漏值末位非 0）；
+- `add` 是定长 `read`，最后一步只发 8 字节会让 `read() != size` → `exit(0)`
+  （表现为"利用成功但没有任何输出"）；
+- `handlers[]` 必须 16 字节对齐（`tcache_get()` 的 `aligned_OK`），且
+  `&handlers + 8` 必须在映射内（`tcache_get()` 会回写 `e->key = 0`）。
+
+实测与文档：`labs/lab_off_by_one/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__{offbyone_ok}`）。
+
+### 3.L10 `lab_unsafe_unlink` → `unsafe_unlink`（自造实验）
+
+为什么造这个 lab：`unlink` 是 2.29 前后语义变化最大的堆原语之一，仓库里没有任何
+题覆盖它。**原计划做 fastbin attack，但 host glibc 2.43 已移除 fastbin**
+（`strings libc.so.6 | grep -c 'memory corruption (fast)'` → `0`；free 20 个
+0x20 块后 dump heap，前 16 个带 tcache key、第 17 个起直接合并进 unsorted，
+无任何块进 fastbin 链），因此在 2.43 上 fastbin attack 物理不可复现，
+L10 改为同样经典、且在 2.43 上仍然有效的 unsafe unlink。
+
+程序逻辑（`labs/lab_unsafe_unlink/src/chal.c`）：
+
+```text
+add(i):  malloc(size); read(0, p, size)
+edit(i): read(0, slots[i], sizes[i] + 8)   /* ← 唯一漏洞：多写 8 字节 */
+del(i):  free(slots[i]); 不清 slots[]/sizes[]   /* UAF */
+trigger(i): handlers[i]("triggered")
+```
+
+判定依据（2.29+ 的两道检查都要过）：
+
+- `chunksize(p) != prev_size(next)`：伪块 `P` 的 size 字段必须等于 `prev_size`；
+- `FD->bk != P || BK->fd != P`：`slots[]` 存的是 **user 指针**，所以把伪块
+  `P` 直接定成 `a.user`（`prev_size = 0xf0`），
+  `P->size = a.user[0x08]`、`P->fd = a.user[0x10]`、`P->bk = a.user[0x18]`；
+  `FD = &slots[0] - 0x18`、`BK = &slots[0] - 0x10` 时
+  `FD->bk == BK->fd == slots[0] == a.user == P`，两道检查同时通过；
+- `free(b)` 时 `b.size` 的 `PREV_INUSE = 0` → 向后合并 → `unlink(a.user)` →
+  `slots[0]` 被写成 `FD`；之后 `edit(0)` 写的就是 `&slots[0] - 0x18`，
+  可以顺手把 `slots[0]` 改成 `&handlers`，再写 `handlers[0] = win`。
+
+坑点（实测）：
+
+- **tcache 上限是 16**（2.43），必须先 free 满 16 个同 size 块，`free(a)` 才会进
+  unsorted；按教材写 7 个的话 `free(a)` 仍进 tcache，`free(b)` 永远不触发 unlink；
+- **a 必须放在 `slots[0]`**：`FD/BK` 锚在 `slots[0]`，换成别的槽位立刻
+  `corrupted double-linked list`；
+- 第一次实现按 `prev_size = 0x100` 写（伪块 = `a.chunk`）会失败，
+  因为 `slots[0]` 是 `a.user`、差 0x10 —— 这就是本 lab 最有价值的坑；
+- `b.size` 要同时满足"清掉 PREV_INUSE"和"`chunk_at_offset(b, size)` 落在合法 c 上"。
+
+实测与文档：`labs/lab_unsafe_unlink/README.md`；EXP：同目录 `exp.py`（输出 `__PWNED__{unlink_ok}`）。
+
 ### 3.31 `write4` → `rop_write_memory`（任意地址写 → 自造字符串）
 
 题目形态：64 位、No PIE、NX、无 canary、Partial RELRO；`pwnme` / `print_file`
@@ -1630,6 +1713,8 @@ stosb                      # 写进 .bss，rdi++
 | （无原始附件，自造） | `labs/lab_heap_uaf/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L6，函数指针 UAF） |
 | （无原始附件，自造） | `labs/lab_double_free/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L7，tcache double free，`secure_free` 清 key，glibc 2.43） |
 | （无原始附件，自造） | `labs/lab_fmtstr_read/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L8，fmtstr 只读：`%p` 扫栈 + `%N$s` 读 `secret[]`） |
+| （无原始附件，自造） | `labs/lab_off_by_one/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L9，off-by-one → chunk overlap → tcache poisoning，glibc 2.43） |
+| （无原始附件，自造） | `labs/lab_unsafe_unlink/`：`src/chal.c`、`Makefile`、`chal`、`exp.py`、`README.md`（L10，unsafe unlink，绕过 2.29+ 双检查，glibc 2.43） |
 | ROP Emporium `write4`（外部下载，`_vendor/ropemporium/write4.zip`） | `rop_write_memory/31_ropemporium_write4_*`、`rop_write_memory/write4`、`rop_write_memory/libwrite4.so`、`rop_write_memory/flag.txt` |
 | ROP Emporium `badchars`（外部下载，`_vendor/ropemporium/badchars.zip`） | `badchars_encoding/32_ropemporium_badchars_*`、`badchars_encoding/badchars`、`badchars_encoding/libbadchars.so`、`badchars_encoding/flag.txt` |
 
@@ -1885,5 +1970,34 @@ python tools/repro_audit.py L7 L8  # 两题的编译/二进制/环境变量/文�
 ```
 
 附件备份：无（自造，源码在 `labs/lab_{double_free,fmtstr_read}/src/`，`chal` 由 `make` 生成）。
+
+### 5.11 2026-11-26 新增自造靶场（`off_by_one` / `unsafe_unlink`，已解决）
+
+继续按 §5.10 的思路补两个"真实频率高但没有靶子"的堆模式：
+
+1. **`L9_lab_off_by_one`**：`read(0,p,size+1)` 是最常见的堆 off-by-one 形态，
+   仓库里 15/16/26 都不是这一型。本 lab 用 4 个 0x30 chunk 把
+   "改 size LSB → 换 bin → chunk overlap → safe-linking poisoning" 一次性走通，
+   并作为 26_card（PENDING）§10 里"overlap 原语本身可行"的**独立证据**：
+   26 的遗留问题只在"hook 落点/协议"，不在 overlap 技术。
+   实测数据：`page = chunk2>>12`、`handlers=0x4041a0`、`win=0x4012bf`。
+2. **`L10_lab_unsafe_unlink`**：原计划做 fastbin attack，**实测发现 host glibc 2.43
+   已移除 fastbin**（`strings libc.so.6 | grep -c 'memory corruption (fast)'` → `0`；
+   free 20 个 0x20 块后 dump heap，前 16 个带 tcache key、第 17 个起直接合并进
+   unsorted，无任何块进 fastbin 链；同时实测 **tcache 每个 bin 上限是 16，不是 7**）。
+   因此改为在同一 chal 上做 unsafe unlink：`prev_size=0xf0` 让伪块落在 `a.user`，
+   从而同时满足 `chunksize(P)==prev_size` 与 `FD->bk==BK->fd==P`。
+   这个"环境变迁"本身就是重要留痕：**2.43 上不要再照抄 fastbin dup**。
+
+复现：
+
+```bash
+cd '/home/yfhd5/Pwn_Writeups'
+source .venv/bin/activate
+bash tools/verify_all.sh L9 L10     # 期望 PASS=2 FAIL=0 SKIP=0
+python tools/repro_audit.py L9 L10  # 两题的编译/二进制/环境变量/文档块全部通过
+```
+
+附件备份：无（自造，源码在 `labs/lab_{off_by_one,unsafe_unlink}/src/`，`chal` 由 `make` 生成）。
 
 

@@ -187,6 +187,18 @@ if need labs/lab_fmtstr_read/chal L8 '先 cd labs/lab_fmtstr_read && make'; then
   run_case L8 labs/lab_fmtstr_read '__PWNED__' "$PY" exp.py
 fi
 
+# ---- labs 第四梯队（off_by_one / unsafe_unlink）----
+# 注意：host glibc 2.43 已经没有 fastbin（libc 里连 "memory corruption (fast)"
+# 都不存在），原计划的 fastbin attack 在 2.43 上无法复现，L10 改为 unsafe unlink。
+if need labs/lab_off_by_one/chal L9 '先 cd labs/lab_off_by_one && make'; then
+  mk_flag labs/lab_off_by_one '__PWNED__{offbyone_ok}'
+  run_case L9 labs/lab_off_by_one '__PWNED__' "$PY" exp.py
+fi
+if need labs/lab_unsafe_unlink/chal L10 '先 cd labs/lab_unsafe_unlink && make'; then
+  mk_flag labs/lab_unsafe_unlink '__PWNED__{unlink_ok}'
+  run_case L10 labs/lab_unsafe_unlink '__PWNED__' "$PY" exp.py
+fi
+
 echo "----------------------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ -n "$FAILED" ] && echo "失败题号:$FAILED（日志在 $OUT/）"

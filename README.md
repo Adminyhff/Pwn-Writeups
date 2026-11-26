@@ -138,7 +138,19 @@ Pwn_Writeups/
 │   │   ├── Makefile
 │   │   ├── chal
 │   │   └── exp.py
-│   └── lab_fmtstr_read/               # L8：只有 printf(buf)（读）：%p 扫栈 + %s 读 secret[]
+│   ├── lab_fmtstr_read/               # L8：只有 printf(buf)（读）：%p 扫栈 + %s 读 secret[]
+│   │   ├── README.md
+│   │   ├── src/chal.c
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   └── exp.py
+│   ├── lab_off_by_one/                # L9：edit 多读 1 字节 → 改相邻 size → chunk overlap → .bss
+│   │   ├── README.md
+│   │   ├── src/chal.c
+│   │   ├── Makefile
+│   │   ├── chal
+│   │   └── exp.py
+│   └── lab_unsafe_unlink/             # L10：多写 8 字节 → 伪造 prev_size → unlink → 改 slots[0]
 │       ├── README.md
 │       ├── src/chal.c
 │       ├── Makefile
@@ -170,7 +182,7 @@ Pwn_Writeups/
 │   ├── 29_pwnable_tw_seethefile_{speedrun,exp}.*
 │   └── seethefile
 └── tools/                             # 仓库自检脚本（非题目）
-    ├── repro_audit.py                 # 01–34 + L1–L8 复现性静态审计（见 README 文末）
+    ├── repro_audit.py                 # 01–34 + L1–L10 复现性静态审计（见 README 文末）
     ├── verify_all.sh                  # 本地实跑矩阵（逐题 PASS/FAIL）
     └── loopback_unix_shim.c           # WSL2 loopback TCP 不可用时的 AF_UNIX 兜底（仅 jarvisoj_http 验证用）
 ```
@@ -196,6 +208,8 @@ Pwn_Writeups/
 | `canary_bruteforce` | 有 canary 且无泄漏点 + 每次连接重启（fork server）→ 逐字节试错 | `L5_lab_canary_bruteforce`（自造） |
 | `double_free` | free 前 memset/清字段把 `tcache_entry.key` 抹掉 → 同一 chunk 连 free 两次 → tcache 成环 → 改 `next` 落 `.bss` | `L7_lab_double_free`（自造） |
 | `format_string_read` | 只有 `printf(buf)` 的**读**能力：`%p` 扫栈（canary / libc）、`%N$s` 读 GOT 与任意地址 | `L8_lab_fmtstr_read`（自造） |
+| `off_by_one` | `read`/`strcpy` 多 1 字节 → 改相邻 chunk 的 size LSB（保留 `PREV_INUSE`）→ 该块 free 进更大的 tcache bin → 取回时覆盖后块头部 = **chunk overlap** → safe-linking tcache poisoning | `L9_lab_off_by_one`（自造） |
+| `unsafe_unlink` | 多写 8 字节改 next chunk 的 `prev_size`/`size`（清 `PREV_INUSE`）→ `free` 触发向后合并 → `unlink` 时用“指向自己的全局槽位”同时骗过 `chunksize(p)==prev_size` 与 `FD->bk==BK->fd==p` 两道检查 → 全局指针被改写成 `.bss` 附近 | `L10_lab_unsafe_unlink`（自造） |
 | `heap_exploitation` | 堆布局 / 分配器元数据 / 对象指针改写 | `15_babyheap_Octf_2017`、`16_babyfengshui_33c3_2016`、`26_card`（PENDING） |
 | `fsop` | 可控 `FILE *` / `_IO_list_all` → 伪造 `_IO_FILE` + vtable | `29_pwnable_tw_seethefile` |
 | `rop_write_memory` | 目标函数要一个**内存里不存在**的字符串，用 `mov [reg_a], reg_b; ret` 写进 `.data`/`.bss`，再 `pop rdi` 传地址 | `31_ropemporium_write4` |
@@ -378,18 +392,30 @@ cd ../labs/lab_fmtstr_read
 make
 printf '__PWNED__{fmt_read_ok}\n' > flag.txt
 python exp.py
+
+cd ../labs/lab_off_by_one
+# L9 是自造 off-by-one 靶场：edit 多读 1 字节 → 改相邻 size → chunk overlap → .bss 函数指针
+make
+printf '__PWNED__{offbyone_ok}\n' > flag.txt
+python exp.py
+
+cd ../labs/lab_unsafe_unlink
+# L10 是自造 unsafe unlink 靶场：多写 8 字节伪造 prev_size → unlink 改 slots[0] → .bss 函数指针
+make
+printf '__PWNED__{unlink_ok}\n' > flag.txt
+python exp.py
 ```
 
 > 远程 EXP 中的 `HOST` / `PORT` 会随靶机变化；CTF² 平台需要 `ssl=True`。
 
 ---
 
-## 复现自检（01–34 + L1–L8，2026-11-25）
+## 复现自检（01–34 + L1–L10，2026-11-26）
 
 不逐题实跑（成本高），改用**静态审计**回答一个问题：把仓库重新 clone 下来、备齐附件后，
 每道题是否都能按文档跑起来。审计脚本：[`tools/repro_audit.py`](tools/repro_audit.py)。
 
-它覆盖 `*/*_exp.py`（题号 01–34）与 `labs/*/exp.py`（L1–L8；EXP 名统一是 `exp.py`，
+它覆盖 `*/*_exp.py`（题号 01–34）与 `labs/*/exp.py`（L1–L10；EXP 名统一是 `exp.py`，
 文档用同目录 `README.md`），检查五项，全部是“缺了就跑不起来”的硬条件：
 
 1. `*_exp.py` / `labs/*/exp.py` 能否 `compile()` 通过（不落 `__pycache__`）；
@@ -406,9 +432,10 @@ python tools/repro_audit.py --md     # Markdown 表（本节的表就是它生�
 python tools/repro_audit.py 08 19    # 只审指定题号
 python tools/repro_audit.py 6        # 只审 lab L6（也接受 `L6` 写法）
 python tools/repro_audit.py L7 L8    # 只审 lab L7 / L8
+python tools/repro_audit.py L9 L10   # 只审 lab L9 / L10
 ```
 
-当前结果：**41 题（33 个编号题 + 8 个 lab），文档缺口 0**
+当前结果：**43 题（33 个编号题 + 10 个 lab），文档缺口 0**
 （26_card 已改名 `(pending)` 归档、不再计入；`verify_all.sh` 里仍保留 26 的 SKIP 占位）。
 
 ### 32 位题的公共前置（i386 loader）
@@ -484,6 +511,16 @@ md5sum root/usr/lib/i386-linux-gnu/libc.so.6    # 7fde74420b72b39b43abdce782ade0
   `free` 前 `memset` 把 `tcache_entry.key` 清掉 → tcache 成环 → 改 `next` 落 `.bss`
   函数指针）与 `L8_lab_fmtstr_read`（`format_string_read`：唯一漏洞是 `printf(buf)`，
   用 `%p` 扫栈 + `%N$s` 读 `puts@got` 与 `secret[]`，无 `%n`）。题型分类 **十九类 → 二十一类**。
+- **2026-11-26 新增 2 个题型 / 2 个 case**（自造 lab，见 `PATTERN_CLASSIFICATION.md`
+  §3.L9 / §3.L10）：`L9_lab_off_by_one`（`off_by_one`：`read` 多 1 字节改掉相邻
+  chunk 的 size LSB → 0x30 的块 free 进 `tcache[0x60]` → 取回时覆盖后块头部 =
+  chunk overlap → safe-linking tcache poisoning）与 `L10_lab_unsafe_unlink`
+  （`unsafe_unlink`：多写 8 字节伪造 `prev_size`/`size` → `free` 触发向后合并 →
+  用“指向自己的全局槽位”同时骗过 2.29+ 的两道 unlink 检查）。
+  **原计划的 fastbin attack 取消**：host glibc 2.43 已移除 fastbin
+  （`strings libc.so.6 | grep -c 'memory corruption (fast)'` → `0`，
+  free 20 个 0x20 块后 dump heap 无任何块进 fastbin 链），见 `lab_unsafe_unlink/README.md` §0。
+  题型分类 **二十一类 → 二十三类**。
 - **本次（2026-11-24 晚）新增 3 个题型 / 3 个 case**：
   `30_ropemporium_ret2csu`（真实赛题）、`L2_lab_ret2syscall_i386`、`L3_lab_ret2dlresolve_i386`
   （自造），三者本地实跑均 PASS；题型分类从十二类扩到十五类。
@@ -544,8 +581,10 @@ bash tools/verify_all.sh 26 27 28     # 只跑指定题号（日志在 /tmp/veri
 | L6 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（本次新增） |
 | L7 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-25 新增） |
 | L8 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-25 新增） |
+| L9 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-26 新增） |
+| L10 | 先 `make`（主机 gcc，glibc 2.43；临时 `flag.txt`） | `__PWNED__` | PASS（2026-11-26 新增） |
 
-总计 **PASS=20 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
+总计 **PASS=22 FAIL=0 SKIP=1**；缺前置时脚本会 `SKIP` 并打印原因，不会误报失败。
 （SKIP 的那 1 题是 `26_card`：**2026-11-26 主动放弃（PENDING）**。stage-1 的 libc 泄漏已跑通
 并与 `/proc/<pid>/maps` 交叉验证一致，但 `__free_hook` 写入后 `free()` 不触发 hook
 （`system` / `_exit` / `0xdeadbeef` 三组对照都不崩不退）。exp 与文档已改名加 `(pending)` 后缀，
